@@ -5,9 +5,10 @@ use codexone_responses::{self as protocol, ProtocolError, ProviderFailure};
 use futures_util::stream;
 use http::{HeaderMap, StatusCode};
 use http_body::Frame;
-use tokio::{sync::OwnedSemaphorePermit, time::Instant};
+use tokio::time::Instant;
 
 use crate::{
+    body_budget::BodyPermit,
     headers,
     reply::{self, Delivery, FlushDeliveries, Reply},
     unix_time,
@@ -17,10 +18,20 @@ pub struct ResponseError {
     pub protocol: ProtocolError,
     provider: Option<Box<ProviderFailure>>,
     failure: execution::Failure,
+    retry_after_seconds: Option<u64>,
 }
 
 impl ResponseError {
-    pub fn reply(&self, request_id: &str, headers: HeaderMap) -> Reply {
+    pub fn body_capacity() -> Self {
+        let mut error = Self::from(ProtocolError::new(503, "capacity_exhausted"));
+        error.retry_after_seconds = Some(1);
+        error
+    }
+
+    pub fn reply(&self, request_id: &str, mut headers: HeaderMap) -> Reply {
+        if let Some(seconds) = self.retry_after_seconds {
+            headers.insert(http::header::RETRY_AFTER, seconds.into());
+        }
         reply::error(self.protocol, self.provider.as_deref(), request_id, headers)
     }
 
@@ -52,6 +63,7 @@ impl From<ProtocolError> for ResponseError {
             protocol: error,
             provider: None,
             failure,
+            retry_after_seconds: None,
         }
     }
 }
@@ -77,6 +89,22 @@ impl From<execution::ExecutionError> for ResponseError {
                 (503, "maintenance_required", Failure::AccountUnavailable)
             }
             ExecutionError::Capacity => (503, "capacity_exceeded", Failure::LocalCapacity),
+            ExecutionError::AccountUnavailable | ExecutionError::AccountCooldown { .. } => {
+                (503, "account_unavailable", Failure::AccountUnavailable)
+            }
+            ExecutionError::AccountForceStopped => {
+                (503, "account_force_stopped", Failure::AccountUnavailable)
+            }
+            ExecutionError::ContinuationOwnerUnavailable => (
+                503,
+                "continuation_owner_unavailable",
+                Failure::AccountUnavailable,
+            ),
+            ExecutionError::DeadlineExceeded => (
+                504,
+                "execution_deadline_exceeded",
+                Failure::DeadlineExceeded,
+            ),
             ExecutionError::AccountConcurrency => {
                 (429, "account_concurrency_exceeded", Failure::LocalCapacity)
             }
@@ -90,6 +118,12 @@ impl From<execution::ExecutionError> for ResponseError {
             protocol: ProtocolError::new(status, code),
             provider: None,
             failure,
+            retry_after_seconds: match error {
+                ExecutionError::AccountCooldown {
+                    retry_after_seconds,
+                } => Some(retry_after_seconds),
+                _ => None,
+            },
         }
     }
 }
@@ -182,6 +216,18 @@ impl Attempt {
             .get_or_insert_with(|| milliseconds(self.began));
     }
 
+    fn check_stopped(&self) -> Result<(), ResponseError> {
+        if self
+            .lease
+            .as_ref()
+            .is_some_and(execution::Execution::was_force_stopped)
+        {
+            Err(execution::ExecutionError::AccountForceStopped.into())
+        } else {
+            Ok(())
+        }
+    }
+
     async fn apply(
         &mut self,
         observation: protocol::Observation,
@@ -190,6 +236,7 @@ impl Attempt {
         for usage in observation.usage {
             self.lease().observe(evidence(usage))?;
         }
+        self.check_stopped()?;
         let mut delivery = observation.result.map_err(|error| match error {
             protocol::EventFailure::Protocol(error) => ResponseError::from(error),
             protocol::EventFailure::Provider(error) => ResponseError::from(error),
@@ -199,6 +246,7 @@ impl Attempt {
                 .bind(&bindings(std::mem::take(&mut delivery.bindings)))
                 .await?;
         }
+        self.check_stopped()?;
         Ok(delivery)
     }
 
@@ -282,7 +330,7 @@ pub async fn forward(
     lease: execution::Execution,
     request_id: String,
     pending: FlushDeliveries,
-    body_permit: OwnedSemaphorePermit,
+    body_permit: BodyPermit,
 ) -> Reply {
     let mut attempt = Attempt {
         lease: Some(lease),
@@ -379,6 +427,7 @@ pub async fn forward(
     match result {
         Ok(reply) => reply,
         Err(error) => {
+            let error = attempt.check_stopped().err().unwrap_or(error);
             attempt.fail(&error);
             error.reply(&request_id, response_headers)
         }
@@ -436,15 +485,11 @@ struct EventReader {
     parser: protocol::ResponseStream<'static>,
     effective_progress: bool,
     returned_turn_state: bool,
-    _body_permit: OwnedSemaphorePermit,
+    _body_permit: BodyPermit,
 }
 
 impl EventReader {
-    fn new(
-        upstream: upstream::Response,
-        transfer: &Transfer,
-        body_permit: OwnedSemaphorePermit,
-    ) -> Self {
+    fn new(upstream: upstream::Response, transfer: &Transfer, body_permit: BodyPermit) -> Self {
         Self {
             upstream,
             chunk: Bytes::new(),
@@ -559,6 +604,7 @@ impl StreamOutput {
                 Ok((_, None)) => continue,
                 Err(error) => {
                     self.reader.take();
+                    let error = self.attempt.check_stopped().err().unwrap_or(error);
                     self.attempt.fail(&error);
                     return Some(error.streaming_frame(&self.request_id));
                 }

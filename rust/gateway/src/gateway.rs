@@ -2,10 +2,14 @@ use std::{fs::DirBuilder, os::unix::fs::DirBuilderExt, path::Path, sync::Arc, ti
 
 use bytes::Bytes;
 use codexone_admin::{AdminRouter, ReadinessReport};
-use codexone_config::{Configuration, SingleIdentity, Source, UpstreamTransport};
-use codexone_execution::{
-    ExecutionService, ExecutionStatus, Options, StaticIdentity, StaticIdentityConfig,
+use codexone_config::{
+    Configuration, ResponsesConfiguration, SingleIdentity, Source, UpstreamContract,
+    UpstreamTransport,
 };
+use codexone_execution::{
+    ExecutionService, ExecutionStatus, FixedIdentity, Options, StaticIdentity, StaticIdentityConfig,
+};
+use codexone_governance::KeyOptions;
 use codexone_http_upstream::Proxy;
 use codexone_maintenance::online::OnlineBackup;
 use codexone_storage::{AccountCredentialCipher, Database};
@@ -24,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     data::{self, DataPlane},
     listener::{Listeners, Plane, ReadError, read_body},
+    managed::{self, Managed, Pool, SubscriptionTarget},
     online_backup::BackupTask,
     reply::{self, FlushDeliveries, Reply},
 };
@@ -39,6 +44,8 @@ pub struct Application {
     admin: AdminRouter,
     data: Option<DataPlane>,
     execution: Option<ExecutionService>,
+    managed: Option<Managed>,
+    pool: Option<Arc<Pool>>,
 }
 
 impl Application {
@@ -47,6 +54,9 @@ impl Application {
         report.checks[1].ready = self.data.is_some();
         if let Some(execution) = &self.execution {
             report.checks[0].ready = execution.admission_ready().await;
+            if let Some(pool) = &self.pool {
+                report.checks[1].ready = pool.ready(execution).await;
+            }
             report.checks[2].ready =
                 self.data.is_some() && execution.status() == ExecutionStatus::Accepting;
         }
@@ -54,10 +64,19 @@ impl Application {
     }
 
     pub async fn admin(&self, request: &Request<Bytes>) -> Response<Bytes> {
-        self.admin
+        if let Some(response) = self
+            .admin
             .route(request, async || self.readiness().await)
             .await
-            .unwrap_or_else(codexone_admin::not_found)
+        {
+            return response;
+        }
+        if let Some(managed) = &self.managed
+            && let Some(response) = managed.route(&self.admin, request).await
+        {
+            return response;
+        }
+        codexone_admin::not_found()
     }
 
     pub async fn data(&self, request: Request<Incoming>, pending: FlushDeliveries) -> Reply {
@@ -105,19 +124,36 @@ impl Application {
 }
 
 pub async fn run(config: Configuration) -> Result<(), StartupError> {
-    run_with_backup(config, BackupTask::start).await
+    run_configured(config, None, BackupTask::start).await
 }
 
+#[cfg(test)]
+pub(crate) async fn run_with_target(
+    config: Configuration,
+    subscription: Option<SubscriptionTarget>,
+) -> Result<(), StartupError> {
+    run_configured(config, subscription, BackupTask::start).await
+}
+
+#[cfg(test)]
 pub(crate) async fn run_with_backup(
+    config: Configuration,
+    start_backup: impl FnOnce(OnlineBackup, ExecutionService) -> BackupTask,
+) -> Result<(), StartupError> {
+    run_configured(config, None, start_backup).await
+}
+
+async fn run_configured(
     mut config: Configuration,
+    subscription: Option<SubscriptionTarget>,
     start_backup: impl FnOnce(OnlineBackup, ExecutionService) -> BackupTask,
 ) -> Result<(), StartupError> {
     use StartupError::*;
-    let runtime = config.runtime;
     let mut terminate = signal(SignalKind::terminate()).map_err(|_| Service)?;
     let mut interrupt = signal(SignalKind::interrupt()).map_err(|_| Service)?;
     let proxy = config
         .upstream_proxy
+        .take()
         .map(|proxy| {
             let authority = if proxy.host.contains(':') {
                 format!("[{}]:{}", proxy.host, proxy.port)
@@ -129,23 +165,53 @@ pub(crate) async fn run_with_backup(
         .transpose()
         .map_err(|_| Service)?;
 
+    let key_options = KeyOptions::configured(&config);
+    let runtime = config.runtime;
     if runtime.http_body_staging_directory.is_some() {
         return Err(UnsupportedSettings);
     }
-    let (options, data) = match config.source.take() {
-        None => (Options::new("storage-only"), None),
+    let static_identity =
+        matches!(&config.source, Some(Source::SingleIdentity(identity)) if !identity.managed_keys);
+    let (mut options, mut data, pool_config) = match config.source.take() {
+        None => (Options::new("storage-only"), None, None),
         Some(Source::SingleIdentity(identity))
-            if !identity.managed_keys
-                && identity.responses.upstream_transport == UpstreamTransport::Http =>
+            if identity.responses.upstream_transport == UpstreamTransport::Http =>
         {
             let token = identity.read_upstream_token().map_err(|_| Service)?;
             let token = token.as_ref().map(|token| token.as_str());
-            let policy = identity_policy(&identity, token)?;
-            let data = DataPlane::new(*identity, token, proxy).map_err(|_| Service)?;
-            (Options::for_static_identity(policy), Some(data))
+            let (options, versions) = if identity.managed_keys {
+                let fixed = FixedIdentity::new(
+                    &identity.namespace,
+                    identity.identity.clone(),
+                    &identity.upstream_base_url,
+                    token,
+                )
+                .map_err(|_| Service)?;
+                (
+                    Options::for_fixed_identity_with_managed_keys(fixed),
+                    Some(identity_versions(
+                        &identity.responses,
+                        identity.upstream_contract,
+                    )?),
+                )
+            } else {
+                (
+                    Options::for_static_identity(identity_policy(&identity, token)?),
+                    None,
+                )
+            };
+            let data =
+                DataPlane::new(*identity, token, proxy.clone(), versions).map_err(|_| Service)?;
+            (options, Some(data), None)
+        }
+        Some(Source::AccountPool(pool)) if pool.upstream_transport == UpstreamTransport::Http => {
+            (Options::for_account_pool(), None, Some(pool))
         }
         _ => return Err(UnsupportedConfiguration),
     };
+    if config.master_keys.is_some() {
+        options = options.with_governance_recovery(managed::recover);
+    }
 
     // Neither listener is announced until both sockets and startup recovery are ready.
     let data_listener = Listeners::bind("data", runtime.data_port, runtime.listen_address)
@@ -157,7 +223,6 @@ pub(crate) async fn run_with_backup(
     let offset = (runtime.business_day_offset_minutes / 60) as i8;
     let (execution, backup) = match runtime.data_directory {
         Some(directory) => {
-            let static_identity = data.is_some();
             let database =
                 tokio::task::spawn_blocking(move || initialize_store(&directory, static_identity))
                     .await
@@ -195,6 +260,36 @@ pub(crate) async fn run_with_backup(
         }
         None => (None, None),
     };
+    let (managed, pool) = if let Some(execution) = &execution
+        && config.admin_digest.is_some()
+    {
+        let (managed, pool) = Managed::new(
+            execution.clone(),
+            config.master_keys,
+            subscription.unwrap_or_else(|| SubscriptionTarget::production(proxy.clone())),
+            key_options,
+        )
+        .map_err(|_| Service)?;
+        (Some(managed), pool)
+    } else {
+        (None, None)
+    };
+    let pool = if let Some(pool_config) = pool_config {
+        let execution = execution.as_ref().ok_or(Service)?;
+        let pool = pool.ok_or(Service)?;
+        execution
+            .configure_health_models(managed::health_models(&pool_config))
+            .await
+            .map_err(|_| Service)?;
+        let versions = identity_versions(&pool_config, UpstreamContract::CodexSubscription)?;
+        data = Some(
+            DataPlane::new_pool(*pool_config, pool.clone(), versions, proxy)
+                .map_err(|_| Service)?,
+        );
+        Some(pool)
+    } else {
+        None
+    };
     let data_connections = data.as_ref().map_or(128, DataPlane::max_connections);
     let app = Arc::new(Application {
         admin: AdminRouter::new(
@@ -206,6 +301,8 @@ pub(crate) async fn run_with_backup(
         ),
         data,
         execution,
+        managed,
+        pool,
     });
     let access: Arc<[_]> = runtime.allowed_networks.into();
     let stopping = CancellationToken::new();
@@ -226,11 +323,18 @@ pub(crate) async fn run_with_backup(
         stopping.clone(),
         codexone_admin::MAX_CONNECTIONS,
     ));
+    let mut managed_tasks = JoinSet::new();
+    if let Some(managed) = &app.managed
+        && let Some(supervise) = managed.supervise()
+    {
+        managed_tasks.spawn(supervise);
+    }
     let mut failed = tokio::select! {
         _ = terminate.recv() => false,
         _ = interrupt.recv() => false,
         _ = listeners.join_next() => true,
         _ = supervise_execution(app.execution.as_ref()) => true,
+        _ = managed_tasks.join_next(), if !managed_tasks.is_empty() => true,
     };
 
     if let Some(backup) = &backup {
@@ -246,6 +350,19 @@ pub(crate) async fn run_with_backup(
     app.admin.revoke_sessions();
     if let Some(backup) = backup {
         backup.join().await;
+    }
+    if let Some(managed) = &app.managed {
+        if time::timeout(Duration::from_secs(3), managed.shutdown())
+            .await
+            .is_ok()
+        {
+            while let Some(result) = managed_tasks.join_next().await {
+                failed |= !matches!(result, Ok(Ok(())));
+            }
+        } else {
+            managed_tasks.abort_all();
+            failed = true;
+        }
     }
     if let Some(execution) = &app.execution {
         let drained = match time::timeout(Duration::from_secs(3), async {
@@ -334,6 +451,40 @@ fn identity_policy(
 ) -> Result<StaticIdentity, StartupError> {
     use StartupError::Service;
     let config = &identity.responses;
+    let (policy_version, pricing_version) = identity_versions(config, identity.upstream_contract)?;
+    StaticIdentity::new(
+        StaticIdentityConfig {
+            principal: identity.principal.clone().ok_or(Service)?,
+            key_id: identity.key_id.clone().ok_or(Service)?,
+            key_sha256: identity.key_sha256.ok_or(Service)?,
+            namespace: identity.namespace.clone(),
+            identity: identity.identity.clone(),
+            upstream_base_url: identity.upstream_base_url.clone(),
+            models: config.models.iter().map(|model| model.id.clone()).collect(),
+            vision_input: config
+                .models
+                .iter()
+                .any(|model| model.vision_input == Some(true)),
+            image_models: config
+                .image_generation
+                .iter()
+                .flat_map(|images| &images.models)
+                .map(|model| model.id.clone())
+                .collect(),
+            policy_version,
+            pricing_version,
+            reserved_micros: config.reserved_micros,
+        },
+        token,
+    )
+    .map_err(|_| Service)
+}
+
+pub(crate) fn identity_versions(
+    config: &ResponsesConfiguration,
+    contract: UpstreamContract,
+) -> Result<(String, String), StartupError> {
+    use StartupError::Service;
     let mut models: Vec<_> = config.models.iter().collect();
     models.sort_by_key(|model| &model.id);
     let images: Vec<_> = config
@@ -391,27 +542,13 @@ fn identity_policy(
         "firstResponseTimeoutSeconds": config.budget.first_response_seconds,
         "imageFirstResponseTimeoutSeconds": config.budget.image_first_response_seconds,
         "progressTimeoutSeconds": config.budget.progress_seconds,
-        "requestContract": match identity.upstream_contract {
-            codexone_config::UpstreamContract::Responses => "responses",
-            codexone_config::UpstreamContract::CodexSubscription => "codex-subscription",
+        "requestContract": match contract {
+            UpstreamContract::Responses => "responses",
+            UpstreamContract::CodexSubscription => "codex-subscription",
         },
     });
-    StaticIdentity::new(
-        StaticIdentityConfig {
-            principal: identity.principal.clone().ok_or(Service)?,
-            key_id: identity.key_id.clone().ok_or(Service)?,
-            key_sha256: identity.key_sha256.ok_or(Service)?,
-            namespace: identity.namespace.clone(),
-            identity: identity.identity.clone(),
-            upstream_base_url: identity.upstream_base_url.clone(),
-            models: models.iter().map(|model| model.id.clone()).collect(),
-            vision_input: models.iter().any(|model| model.vision_input == Some(true)),
-            image_models: images.iter().map(|model| model.id.clone()).collect(),
-            policy_version: format!("{:x}", Sha256::digest(policy.to_string())),
-            pricing_version: format!("{:x}", pricing.finalize()),
-            reserved_micros: config.reserved_micros,
-        },
-        token,
-    )
-    .map_err(|_| Service)
+    Ok((
+        format!("{:x}", Sha256::digest(policy.to_string())),
+        format!("{:x}", pricing.finalize()),
+    ))
 }

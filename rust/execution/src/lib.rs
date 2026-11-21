@@ -13,9 +13,10 @@ pub use codexone_account_pool::{
 };
 pub use model::*;
 pub use static_identity::{
-    StaticAdmissionRequest, StaticAuthorization, StaticIdentity, StaticIdentityConfig,
+    FixedIdentity, StaticAdmissionRequest, StaticAuthorization, StaticIdentity,
+    StaticIdentityConfig,
 };
-pub use worker::{Execution, ExecutionService, ExecutionStatus, Options};
+pub use worker::{Execution, ExecutionService, ExecutionStatus, GovernanceWork, Options};
 
 use std::{error::Error, fmt};
 
@@ -27,6 +28,7 @@ pub enum ExecutionError {
     Unauthorized,
     KeyExpired,
     AccountUnavailable,
+    AccountForceStopped,
     AccountConcurrency,
     AccountCooldown { retry_after_seconds: u64 },
     ContinuationOwnerUnavailable,
@@ -40,6 +42,7 @@ pub enum ExecutionError {
     StoragePressure,
     StorageUnavailable,
     MaintenanceRequired,
+    DeadlineExceeded,
     Database(codexone_storage::DatabaseError),
     Closed,
 }

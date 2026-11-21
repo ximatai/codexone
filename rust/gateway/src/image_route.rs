@@ -3,7 +3,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 use codexone_config::ResponsesConfiguration;
 use codexone_execution::{
-    ExecutionError, ExecutionService, Mode, StaticAdmissionRequest, StaticAuthorization,
+    AccountIdentity, AuthenticatedKey, ExecutionError, ExecutionService, Mode,
+    StaticAdmissionRequest, StaticAuthorization,
 };
 use codexone_http_upstream::HttpUpstream;
 use codexone_image_service::{
@@ -24,6 +25,7 @@ use uuid::Uuid;
 use crate::{
     headers,
     listener::{DataBodies, ReadError},
+    managed::{Affinity, ManagedRoute},
     reply::{self, FlushDeliveries, Reply},
     response::ResponseError,
 };
@@ -40,6 +42,12 @@ pub struct NativeImages {
     configured: ConfiguredImages,
     base: Uri,
     account_headers: HeaderMap,
+    managed: Option<Arc<ManagedRoute>>,
+}
+
+enum Authorization {
+    Static(StaticAuthorization),
+    Managed(AuthenticatedKey),
 }
 
 impl NativeImages {
@@ -48,6 +56,7 @@ impl NativeImages {
         base: Uri,
         authorization: Option<&HeaderValue>,
         upstream: HttpUpstream,
+        managed: Option<Arc<ManagedRoute>>,
     ) -> Result<Self, ()> {
         let mut account_headers = HeaderMap::new();
         if let Some(authorization) = authorization {
@@ -60,6 +69,7 @@ impl NativeImages {
             .map_err(|_| ())?,
             base,
             account_headers,
+            managed,
         })
     }
 
@@ -76,23 +86,26 @@ impl NativeImages {
         request_id: &str,
         pending: FlushDeliveries,
     ) -> Result<Reply, ResponseError> {
-        let authorization = StaticImageTarget::authenticate(execution, incoming.headers())?;
+        let authorization = if self.managed.is_some() {
+            let bearer = headers::values(incoming.headers(), "authorization");
+            Authorization::Managed(execution.authenticate(&bearer).await?)
+        } else {
+            Authorization::Static(StaticImageTarget::authenticate(
+                execution,
+                incoming.headers(),
+            )?)
+        };
         if *incoming.method() != Method::POST {
             return Err(ProtocolError::new(405, "method_not_allowed").into());
         }
+        let key_id = match &authorization {
+            Authorization::Static(key) => key.key_id(),
+            Authorization::Managed(key) => key.id(),
+        };
         let (parts, incoming) = incoming.into_parts();
-        let (body, ingress_permit) = match bodies.read(incoming).await {
+        let (body, ingress_permit) = match bodies.read(incoming, Some(key_id), request_id).await {
             Ok(body) => body,
-            Err(ReadError::Capacity) => {
-                let mut headers = HeaderMap::new();
-                headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-                return Ok(reply::error(
-                    ProtocolError::new(503, "capacity_exhausted"),
-                    None,
-                    request_id,
-                    headers,
-                ));
-            }
+            Err(ReadError::Capacity) => return Err(ResponseError::body_capacity()),
             Err(error) => {
                 return Err(match error {
                     ReadError::TooLarge => ProtocolError::new(413, "request_too_large"),
@@ -115,6 +128,11 @@ impl NativeImages {
             Ok(request) => request,
             Err(error) => return Ok(image_error(error, HeaderMap::new(), request_id)),
         };
+        if let Authorization::Managed(key) = &authorization
+            && !key.allows_image_model(request.model())
+        {
+            return Err(ProtocolError::new(403, "model_not_allowed").into());
+        }
         let configuration = self.configuration();
         let client_metadata = headers::client(
             &parts.headers,
@@ -129,6 +147,7 @@ impl NativeImages {
             let _ingress_permit = ingress_permit;
             let _cancel_on_drop = cancellation.clone().drop_guard();
             let service = images.configured.borrow_dependent();
+            let mut selected = None;
             let result = service
                 .start_authorized(
                     request,
@@ -138,7 +157,17 @@ impl NativeImages {
                         client_metadata: &client_metadata,
                         cancellation: &cancellation,
                     },
-                    |request| images.admit_static(&execution, &authorization, request),
+                    |request| async {
+                        let dispatch = images.admit(&execution, &authorization, request, &client_metadata).await?;
+                        if let Authorization::Managed(key) = &authorization {
+                            let owner = &dispatch.execution.admission().owner;
+                            selected = Some((key.id(), AccountIdentity {
+                                id: owner.identity.clone(),
+                                namespace: owner.namespace.clone(),
+                            }));
+                        }
+                        Ok(dispatch)
+                    },
                 )
                 .await;
             let mut session = match result {
@@ -161,6 +190,14 @@ impl NativeImages {
                     return;
                 }
             };
+            if status == StatusCode::OK
+                && let (Some(pool), Some((key, identity))) = (
+                    images.managed.as_ref().and_then(|route| route.pool.as_ref()),
+                    selected,
+                )
+            {
+                pool.observe_turn_state(key, &identity, &headers);
+            }
             let streaming = is_sse(&headers);
             if streaming {
                 headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
@@ -223,32 +260,55 @@ impl NativeImages {
         }
     }
 
-    async fn admit_static(
+    async fn admit(
         &self,
         execution: &ExecutionService,
-        authorization: &StaticAuthorization,
+        authorization: &Authorization,
         request: ImageAdmission,
+        headers: &HeaderMap,
     ) -> Result<ImageDispatch, ExecutionError> {
-        let requirements = request.requirements();
-        let execution = execution
-            .admit_static(
-                authorization,
-                StaticAdmissionRequest {
-                    attempt: request.attempt,
-                    request_id: Some(request.request_id),
-                    model: request.model,
-                    mode: Mode::Generation,
-                    requirements,
-                    references: Vec::new(),
-                    reasoning_effort: None,
-                    service_tier: request.service_tier,
-                },
-            )
-            .await?;
+        let admission = StaticAdmissionRequest {
+            requirements: request.requirements(),
+            attempt: request.attempt,
+            request_id: Some(request.request_id),
+            model: request.model,
+            mode: Mode::Generation,
+            references: Vec::new(),
+            reasoning_effort: None,
+            service_tier: request.service_tier,
+        };
+        let (execution, routed_headers) = match authorization {
+            Authorization::Static(authorization) => (
+                execution.admit_static(authorization, admission).await?,
+                HeaderMap::new(),
+            ),
+            Authorization::Managed(key) => {
+                let managed = self.managed.as_ref().ok_or(ExecutionError::Unauthorized)?;
+                let turn_state = request
+                    .turn_state
+                    .as_ref()
+                    .and_then(|value| value.to_str().ok());
+                managed
+                    .admit(
+                        execution,
+                        key.clone(),
+                        admission,
+                        request.deadline,
+                        Some(Affinity {
+                            hints: &[],
+                            turn_state,
+                            headers,
+                        }),
+                    )
+                    .await?
+            }
+        };
+        let mut account_headers = self.account_headers.clone();
+        account_headers.extend(routed_headers);
         Ok(ImageDispatch {
             execution,
             base: self.base.clone(),
-            account_headers: self.account_headers.clone(),
+            account_headers,
         })
     }
 }

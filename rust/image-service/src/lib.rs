@@ -287,9 +287,14 @@ impl<'a> ImageService<'a> {
             return Err(ExecutionError::InvalidCommand.into());
         }
         if let Err(error) = execution.begin_dispatch() {
-            session.settle(Some(Failure::StorageUnavailable))?;
+            session.settle(Some(if error == ExecutionError::AccountForceStopped {
+                Failure::AccountUnavailable
+            } else {
+                Failure::StorageUnavailable
+            }))?;
             return Err(error.into());
         }
+        let stop = execution.account_stop_token().cloned();
 
         let mut options = ExchangeOptions::new(
             deadline,
@@ -299,8 +304,8 @@ impl<'a> ImageService<'a> {
         let progress = Duration::from_secs(self.budget.progress_seconds.into());
         options.upload_idle_timeout = Some(progress);
         options.response_idle_timeout = Some(progress);
-        options.cancellation = session.cancellation.clone();
-        match ImageExchange::start(
+        options.cancellation = stop.unwrap_or_else(|| session.cancellation.clone());
+        let exchange = ImageExchange::start(
             request,
             &self.upstream,
             &base,
@@ -311,14 +316,25 @@ impl<'a> ImageService<'a> {
                 render,
                 authors: &self.author_rates,
             },
-        )
-        .await
-        {
+        );
+        let result = tokio::select! {
+            result = exchange => result,
+            _ = session.cancellation.cancelled() => {
+                session.settle(Some(Failure::ClientCancelled))?;
+                return Err(ServiceError::Cancelled);
+            }
+        };
+        match result {
             Ok(exchange) => {
                 session.exchange = Some(exchange);
                 Ok(session)
             }
             Err(error) => {
+                let error = if session.was_force_stopped() {
+                    ImageError::force_stopped()
+                } else {
+                    error
+                };
                 session.settle_error(&error)?;
                 Err(error.into())
             }
@@ -364,6 +380,11 @@ pub enum DeliveryAbort {
 }
 
 impl ImageSession<'_> {
+    fn was_force_stopped(&self) -> bool {
+        self.execution
+            .as_ref()
+            .is_some_and(Execution::was_force_stopped)
+    }
     pub fn deadline(&self) -> Instant {
         self.deadline
     }
@@ -393,8 +414,22 @@ impl ImageSession<'_> {
         if self.failure.is_some() || self.eof {
             return Ok(None);
         }
+        let stop = self
+            .execution
+            .as_ref()
+            .and_then(Execution::account_stop_token);
         let exchange = self.exchange.as_mut().expect("started session");
-        match exchange.next().await {
+        let result = tokio::select! {
+            biased;
+            _ = async {
+                if let Some(stop) = stop { stop.cancelled().await } else { std::future::pending().await }
+            } => Err(ImageError::force_stopped()),
+            result = exchange.next() => result,
+            _ = self.cancellation.cancelled() => {
+                Err(ImageError::cancelled(codexone_images::ExecutionOutcome::Indeterminate))
+            }
+        };
+        match result {
             Ok(Some(ImageOutput::Begin(mut headers))) => {
                 headers.insert("x-request-id", self.request_id.clone());
                 headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));

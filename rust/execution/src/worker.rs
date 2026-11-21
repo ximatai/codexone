@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -11,20 +11,23 @@ use codexone_account_pool::{Health, PacingWaiters};
 use codexone_storage::{Database, bearer_digest};
 use rusqlite::Transaction;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
+use tokio_util::sync::CancellationToken;
 
 use crate::model::*;
 use crate::reserve::{StorageMonitor, StoragePressure, StorageReserve};
 use crate::{
-    AccountIdentity, ExecutionError as Error, Result, StaticAdmissionRequest, StaticAuthorization,
-    StaticIdentity, admission, ledger,
+    AccountIdentity, ExecutionError as Error, FixedIdentity, Result, StaticAdmissionRequest,
+    StaticAuthorization, StaticIdentity, admission, ledger,
 };
 
 const REGULAR_CAPACITY: usize = 16;
 
 type Job = Box<dyn FnOnce(&mut Writer) + Send>;
+type Recovery = fn(&Transaction<'_>, i64) -> Result<()>;
 
 enum IdentitySource {
     Managed(String),
+    Fixed(FixedIdentity),
     Pool,
     Static(Arc<StaticIdentity>),
 }
@@ -34,6 +37,7 @@ pub struct Options {
     day_offset: i64,
     capacity: usize,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    governance_recovery: Option<Recovery>,
 }
 
 impl Options {
@@ -43,6 +47,10 @@ impl Options {
 
     pub fn for_account_pool() -> Self {
         Self::with_identity(IdentitySource::Pool)
+    }
+
+    pub fn for_fixed_identity_with_managed_keys(identity: FixedIdentity) -> Self {
+        Self::with_identity(IdentitySource::Fixed(identity))
     }
 
     pub fn for_static_identity(policy: StaticIdentity) -> Self {
@@ -55,6 +63,7 @@ impl Options {
             day_offset: 0,
             capacity: 16,
             clock: Arc::new(system_time),
+            governance_recovery: None,
         }
     }
 
@@ -79,6 +88,12 @@ impl Options {
         self.clock = Arc::new(clock);
         self
     }
+
+    /// Recover durable governance intents in the startup ledger transaction.
+    pub fn with_governance_recovery(mut self, recover: Recovery) -> Self {
+        self.governance_recovery = Some(recover);
+        self
+    }
 }
 
 fn system_time() -> i64 {
@@ -95,6 +110,15 @@ pub enum ExecutionStatus {
     Draining,
     Failed,
     Closed,
+}
+
+#[derive(Clone, Copy)]
+pub enum GovernanceWork {
+    Read,
+    Optional,
+    Restrict,
+    Admission,
+    Critical,
 }
 
 struct Gate {
@@ -117,6 +141,12 @@ struct Inner {
     pacing: PacingWaiters,
     capacity: u32,
     done: watch::Receiver<bool>,
+    active: Mutex<HashMap<String, ActiveAccountExecution>>,
+}
+
+struct ActiveAccountExecution {
+    account: String,
+    stop: CancellationToken,
 }
 
 impl Inner {
@@ -128,6 +158,12 @@ impl Inner {
 
     fn fail(&self) {
         self.gate().status.send_replace(ExecutionStatus::Failed);
+    }
+
+    fn active(&self) -> MutexGuard<'_, HashMap<String, ActiveAccountExecution>> {
+        self.active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn enqueue(&self, job: Job, admission: bool) -> Result<()> {
@@ -188,7 +224,14 @@ impl Writer {
             health: Health::default(),
         };
         writer.reserve.maintain(writer.db.connection())?;
-        writer.write(true, ledger::recover)?;
+        let governance = writer.options.governance_recovery;
+        writer.write(true, |tx, now| {
+            ledger::recover(tx, now)?;
+            if let Some(recover) = governance {
+                recover(tx, now)?;
+            }
+            Ok(())
+        })?;
         Ok(writer)
     }
 
@@ -276,7 +319,9 @@ impl ExecutionService {
         let inner = Arc::new(Inner {
             static_identity: match &options.identity {
                 IdentitySource::Static(policy) => Some(policy.clone()),
-                IdentitySource::Managed(_) | IdentitySource::Pool => None,
+                IdentitySource::Managed(_) | IdentitySource::Fixed(_) | IdentitySource::Pool => {
+                    None
+                }
             },
             pool_enabled: matches!(options.identity, IdentitySource::Pool),
             gate: Mutex::new(Gate {
@@ -288,6 +333,7 @@ impl ExecutionService {
             pacing: PacingWaiters::default(),
             capacity: capacity as u32,
             done: done_rx,
+            active: Mutex::new(HashMap::new()),
         });
         let exit = WorkerExit {
             inner: Arc::downgrade(&inner),
@@ -353,6 +399,27 @@ impl ExecutionService {
         self.inner.capacity as usize - self.inner.tickets.available_permits()
     }
 
+    pub fn account_in_flight(&self, account: &str) -> usize {
+        self.inner
+            .active()
+            .values()
+            .filter(|entry| entry.account == account)
+            .count()
+    }
+
+    /// Call inside the same writer command that verifies the disabled mode and revision.
+    pub fn stop_account_executions(&self, account: &str) -> usize {
+        let active = self.inner.active();
+        let mut count = 0;
+        for entry in active.values().filter(|entry| entry.account == account) {
+            if !entry.stop.is_cancelled() {
+                count += 1;
+                entry.stop.cancel();
+            }
+        }
+        count
+    }
+
     pub fn stop_admission(&self) {
         let gate = self.inner.gate();
         if gate.status() == ExecutionStatus::Accepting {
@@ -402,24 +469,38 @@ impl ExecutionService {
         opening_attempt: bool,
         body: impl FnOnce(&mut Writer) -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        let permit = self
-            .inner
-            .regular
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Error::Capacity)?;
+        self.regular_command(opening_attempt, !opening_attempt, false, false, body)
+            .await
+    }
+
+    async fn regular_command<T: Send + 'static>(
+        &self,
+        accepting_required: bool,
+        allow_drain: bool,
+        complete_on_cancel: bool,
+        wait_for_capacity: bool,
+        body: impl FnOnce(&mut Writer) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let slots = self.inner.regular.clone();
+        let permit = if wait_for_capacity {
+            // Only already-durable refresh operations may wait. Their owner bounds
+            // the number of refresh jobs and is joined before shutting down this writer.
+            slots.acquire_owned().await.map_err(|_| Error::Closed)?
+        } else {
+            slots.try_acquire_owned().map_err(|_| Error::Capacity)?
+        };
         let inner = self.inner.clone();
         let (reply, response) = oneshot::channel();
         self.inner.enqueue(
             Box::new(move |writer| {
                 let _permit = permit;
-                if reply.is_closed() {
+                if !complete_on_cancel && reply.is_closed() {
                     return;
                 }
                 let status = inner.gate().status();
-                let result = match (opening_attempt, status) {
-                    (true, ExecutionStatus::Accepting) | (false, _) => body(writer),
-                    (true, ExecutionStatus::Failed) => Err(Error::StorageUnavailable),
+                let result = match (allow_drain, status) {
+                    (_, ExecutionStatus::Accepting) | (true, _) => body(writer),
+                    (_, ExecutionStatus::Failed) => Err(Error::StorageUnavailable),
                     _ => Err(Error::Closed),
                 };
                 if matches!(result, Err(Error::StorageUnavailable)) {
@@ -427,9 +508,53 @@ impl ExecutionService {
                 }
                 let _ = reply.send(result);
             }),
-            opening_attempt,
+            accepting_required,
         )?;
         response.await.map_err(|_| Error::StorageUnavailable)?
+    }
+
+    /// Give a bounded governance command the existing writer, its clock and storage gates.
+    /// The command owns its transaction and runs to completion after enqueueing.
+    pub async fn governance_command<T: Send + 'static>(
+        &self,
+        work: GovernanceWork,
+        operation: impl FnOnce(&mut Database, i64, bool) -> T + Send + 'static,
+    ) -> Result<T> {
+        use GovernanceWork::*;
+        self.regular_command(
+            !matches!(work, Read | Critical),
+            true,
+            true,
+            matches!(work, Critical),
+            move |writer| {
+                let optional = match work {
+                    Read => false,
+                    Optional => {
+                        writer.reserve.check_optional()?;
+                        true
+                    }
+                    Restrict => match writer.reserve.check_optional() {
+                        Ok(()) => true,
+                        Err(Error::StoragePressure) => {
+                            writer.reserve.prepare_critical()?;
+                            false
+                        }
+                        Err(error) => return Err(error),
+                    },
+                    Admission => {
+                        writer.reserve.check_admission()?;
+                        false
+                    }
+                    Critical => {
+                        writer.reserve.prepare_critical()?;
+                        false
+                    }
+                };
+                let now = writer.now()?;
+                Ok(operation(&mut writer.db, now, optional))
+            },
+        )
+        .await
     }
 
     pub async fn authenticate(&self, headers: &[&str]) -> Result<AuthenticatedKey> {
@@ -464,6 +589,25 @@ impl ExecutionService {
                 return Err(Error::Unauthorized);
             };
             admission::admit(tx, account, options.day_offset, request, dispatch, now)
+        })
+        .await
+    }
+
+    /// Recheck current Key limits and revision for the configured fixed upstream.
+    pub async fn admit_fixed(&self, request: ManagedAdmissionRequest) -> Result<Execution> {
+        request.validate()?;
+        let ticket = self.admission_ticket()?;
+        self.submit_single_admission(ticket, move |tx, options, now_micros| {
+            let IdentitySource::Fixed(identity) = &options.identity else {
+                return Err(Error::Unauthorized);
+            };
+            admission::admit_fixed(
+                tx,
+                identity,
+                options.day_offset,
+                request,
+                now_micros.div_euclid(1_000_000),
+            )
         })
         .await
     }
@@ -514,7 +658,22 @@ impl ExecutionService {
         let request = request.clone();
         let routing = routing.clone();
         self.command(true, move |writer| {
-            admission::pool_credentials(writer.db.connection(), &request, &routing, writer.now()?)
+            let now = writer.now()?;
+            writer.reserve.check_admission()?;
+            admission::restore_allows_admission(writer.db.connection(), true, now)?;
+            admission::pool_credentials(writer.db.connection(), &request, &routing, now)
+        })
+        .await
+    }
+
+    /// Local readiness candidates have at least one usable configured model and no
+    /// credential-version authentication barrier. The caller verifies the envelope.
+    pub async fn pool_readiness_credentials(&self) -> Result<Vec<AccountCredentialRecord>> {
+        if !self.inner.pool_enabled {
+            return Err(Error::Unauthorized);
+        }
+        self.command(true, |writer| {
+            admission::pool_readiness_credentials(writer.db.connection(), writer.now()?)
         })
         .await
     }
@@ -675,6 +834,19 @@ impl ExecutionService {
                 ControlFlow::Break(delay) => return Ok(ControlFlow::Break(delay)),
             };
             tx.commit()?;
+            // Registration is ordered with account mode and force-stop commands on
+            // this writer. The finalization ticket bounds the live registry.
+            let stop = admission.account_snapshot.as_ref().map(|_| {
+                let stop = CancellationToken::new();
+                service.inner.active().insert(
+                    admission.attempt.clone(),
+                    ActiveAccountExecution {
+                        account: admission.owner.identity.clone(),
+                        stop: stop.clone(),
+                    },
+                );
+                stop
+            });
             // If the admission future is cancelled after commit, dropping the undelivered
             // lease transfers finalization to the worker just like any other cancellation.
             Ok(ControlFlow::Continue(Execution {
@@ -684,6 +856,7 @@ impl ExecutionService {
                 evidence: None,
                 dispatched: false,
                 binding_failed: false,
+                stop,
             }))
         })
         .await
@@ -758,6 +931,7 @@ pub struct Execution {
     evidence: Option<UsageEvidence>,
     dispatched: bool,
     binding_failed: bool,
+    stop: Option<CancellationToken>,
 }
 
 impl Execution {
@@ -765,10 +939,23 @@ impl Execution {
         &self.admission
     }
 
+    pub fn account_stop_token(&self) -> Option<&CancellationToken> {
+        self.stop.as_ref()
+    }
+
+    pub fn was_force_stopped(&self) -> bool {
+        self.stop
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+    }
+
     /// Call immediately before dispatch. This authorizes one logical upstream operation.
     pub fn begin_dispatch(&mut self) -> Result<()> {
         if self.dispatched {
             return Err(Error::Conflict);
+        }
+        if self.was_force_stopped() {
+            return Err(Error::AccountForceStopped);
         }
         match self.service.status() {
             ExecutionStatus::Accepting => {
@@ -850,13 +1037,32 @@ impl Execution {
         )))
     }
 
-    fn handoff(&mut self, outcome: Option<Outcome>) -> Result<()> {
+    fn handoff(&mut self, mut outcome: Option<Outcome>) -> Result<()> {
         let Some(ticket) = self.ticket.take() else {
             return Ok(());
         };
         let attempt = self.admission.attempt.clone();
         let evidence = self.evidence.take();
         let inner = self.service.inner.clone();
+        if self.stop.is_some() {
+            let stopped = inner
+                .active()
+                .remove(&attempt)
+                .is_some_and(|entry| entry.stop.is_cancelled());
+            if stopped {
+                let at = outcome.as_ref().map_or_else(
+                    || system_time().div_euclid(1_000_000).max(1),
+                    |outcome| outcome.at_unix_seconds,
+                );
+                let mut updated = Outcome::new(Some(Failure::AccountUnavailable), at);
+                if let Some(previous) = outcome {
+                    updated.first_event_milliseconds = previous.first_event_milliseconds;
+                    updated.total_milliseconds = previous.total_milliseconds;
+                    updated.actual_service_tier = previous.actual_service_tier;
+                }
+                outcome = Some(updated);
+            }
+        }
         self.service.inner.enqueue(
             Box::new(move |writer| {
                 let _ticket = ticket;

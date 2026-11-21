@@ -1,34 +1,52 @@
 use codexone_config::{Model, ResponsesConfiguration};
+use codexone_execution::AuthenticatedKey;
 use codexone_responses::ProtocolError;
 use http::Uri;
 use serde_json::{Value, json};
 
-pub fn document(config: &ResponsesConfiguration, uri: &Uri) -> Result<Value, ProtocolError> {
-    let mut data: Vec<_> = config
+pub fn document(
+    config: &ResponsesConfiguration,
+    uri: &Uri,
+    key: Option<&AuthenticatedKey>,
+) -> Result<Value, ProtocolError> {
+    let models = config
         .models
         .iter()
+        .filter(|model| key.is_none_or(|key| key.allows_model(&model.id)));
+    let vision_allowed = key.is_none_or(AuthenticatedKey::allows_vision);
+    let images_allowed = config.image_generation.as_ref().is_some_and(|images| {
+        images
+            .models
+            .iter()
+            .any(|model| key.is_none_or(|key| key.allows_image_model(&model.id)))
+    });
+    let mut data: Vec<_> = models.clone()
         .map(|model| {
             json!({
                 "id": model.id, "object": "model", "owned_by": "configured-provider",
-                "vision_input": model.vision_input == Some(true),
-                "image_generation": model.image_generation == Some(true),
+                "vision_input": vision_allowed && model.vision_input == Some(true),
+                "image_generation": (key.is_none() || images_allowed) && model.image_generation == Some(true),
             })
         })
         .collect();
     if let Some(images) = &config.image_generation {
-        data.extend(images.models.iter().map(|image| {
-            json!({
-                "id": image.id, "object": "model", "owned_by": "configured-provider",
-                "image_generation": true,
-            })
-        }));
+        data.extend(
+            images
+                .models
+                .iter()
+                .filter(|image| key.is_none_or(|key| key.allows_image_model(&image.id)))
+                .map(|image| {
+                    json!({
+                        "id": image.id, "object": "model", "owned_by": "configured-provider",
+                        "image_generation": true,
+                    })
+                }),
+        );
     }
     let mut result = json!({"object": "list", "data": data});
-    let profiles: Option<Vec<_>> = config
-        .models
-        .iter()
+    let profiles: Option<Vec<_>> = models
         .enumerate()
-        .map(|(index, model)| profile(index, model))
+        .map(|(index, model)| profile(index, model, vision_allowed))
         .collect();
     if let Some(profiles) = profiles {
         result["models"] = Value::Array(profiles);
@@ -49,8 +67,8 @@ fn requires_profile(uri: &Uri) -> bool {
     })
 }
 
-fn profile(index: usize, model: &Model) -> Option<Value> {
-    let vision = model.vision_input == Some(true);
+fn profile(index: usize, model: &Model, vision_allowed: bool) -> Option<Value> {
+    let vision = vision_allowed && model.vision_input == Some(true);
     let mut entry = if let Some(profile) = &model.upstream {
         let mut entry = profile.clone();
         if !vision

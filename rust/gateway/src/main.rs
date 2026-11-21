@@ -1,3 +1,4 @@
+pub mod body_budget;
 mod catalog;
 mod data;
 mod gateway;
@@ -5,6 +6,7 @@ mod headers;
 mod image_route;
 mod listener;
 mod online_backup;
+mod managed;
 mod reply;
 mod response;
 
@@ -72,7 +74,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(gateway::StartupError::UnsupportedConfiguration) => {
             eprintln!(
-                "This backend requires unmanaged single-identity configuration with HTTP upstream transport."
+                "This backend supports HTTP upstream transport for single identities and account pools."
             );
             ExitCode::from(78)
         }
@@ -172,3 +174,6 @@ fn unix_time() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs() as i64)
 }
+
+#[cfg(test)]
+mod managed_process;
