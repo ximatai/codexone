@@ -1,0 +1,21 @@
+[package]
+name = "codexone-websocket"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+codexone-http-upstream = { path = "../http-upstream" }
+codexone-responses = { path = "../responses" }
+futures-util = { version = "0.3", features = ["sink"] }
+http = "1"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tokio-tungstenite = "0.29"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
