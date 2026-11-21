@@ -44,6 +44,7 @@ pub(crate) fn usage(usage: codexone_images::UsageEvidence) -> UsageEvidence {
 pub(crate) fn failure(error: &ImageError) -> Failure {
     match error.code {
         _ if error.cancelled => Failure::ClientCancelled,
+        "account_force_stopped" => Failure::AccountUnavailable,
         "upstream_authentication_rejected" => Failure::AuthenticationRejected,
         "upstream_rate_limited" => Failure::RateLimited,
         "upstream_unavailable" => Failure::UpstreamUnavailable,

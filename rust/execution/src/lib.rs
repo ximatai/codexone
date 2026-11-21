@@ -27,6 +27,7 @@ pub enum ExecutionError {
     Unauthorized,
     KeyExpired,
     AccountUnavailable,
+    AccountForceStopped,
     AccountConcurrency,
     AccountCooldown { retry_after_seconds: u64 },
     ContinuationOwnerUnavailable,

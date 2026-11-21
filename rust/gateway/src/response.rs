@@ -85,6 +85,9 @@ impl From<execution::ExecutionError> for ResponseError {
             ExecutionError::AccountUnavailable | ExecutionError::AccountCooldown { .. } => {
                 (503, "account_unavailable", Failure::AccountUnavailable)
             }
+            ExecutionError::AccountForceStopped => {
+                (503, "account_force_stopped", Failure::AccountUnavailable)
+            }
             ExecutionError::ContinuationOwnerUnavailable => (
                 503,
                 "continuation_owner_unavailable",
@@ -206,6 +209,18 @@ impl Attempt {
             .get_or_insert_with(|| milliseconds(self.began));
     }
 
+    fn check_stopped(&self) -> Result<(), ResponseError> {
+        if self
+            .lease
+            .as_ref()
+            .is_some_and(execution::Execution::was_force_stopped)
+        {
+            Err(execution::ExecutionError::AccountForceStopped.into())
+        } else {
+            Ok(())
+        }
+    }
+
     async fn apply(
         &mut self,
         observation: protocol::Observation,
@@ -214,6 +229,7 @@ impl Attempt {
         for usage in observation.usage {
             self.lease().observe(evidence(usage))?;
         }
+        self.check_stopped()?;
         let mut delivery = observation.result.map_err(|error| match error {
             protocol::EventFailure::Protocol(error) => ResponseError::from(error),
             protocol::EventFailure::Provider(error) => ResponseError::from(error),
@@ -223,6 +239,7 @@ impl Attempt {
                 .bind(&bindings(std::mem::take(&mut delivery.bindings)))
                 .await?;
         }
+        self.check_stopped()?;
         Ok(delivery)
     }
 
@@ -403,6 +420,7 @@ pub async fn forward(
     match result {
         Ok(reply) => reply,
         Err(error) => {
+            let error = attempt.check_stopped().err().unwrap_or(error);
             attempt.fail(&error);
             error.reply(&request_id, response_headers)
         }
@@ -583,6 +601,7 @@ impl StreamOutput {
                 Ok((_, None)) => continue,
                 Err(error) => {
                     self.reader.take();
+                    let error = self.attempt.check_stopped().err().unwrap_or(error);
                     self.attempt.fail(&error);
                     return Some(error.streaming_frame(&self.request_id));
                 }

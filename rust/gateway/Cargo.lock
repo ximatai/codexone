@@ -190,6 +190,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tokio",
+ "tokio-util",
  "zeroize",
 ]
 
@@ -304,6 +305,7 @@ dependencies = [
  "codexone-http-upstream",
  "codexone-images",
  "http",
+ "tokio",
 ]
 
 [[package]]

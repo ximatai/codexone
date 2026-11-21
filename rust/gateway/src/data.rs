@@ -441,6 +441,9 @@ impl DataPlane {
             return Err(error);
         }
         lease.begin_dispatch()?;
+        if let Some(stop) = lease.account_stop_token() {
+            options.cancellation = stop.clone();
+        }
         let exchange = async {
             let upstream = self.upstream.send(outbound, options).await?;
             if upstream.status() == StatusCode::OK

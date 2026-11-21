@@ -49,10 +49,18 @@ impl ImageError {
         Self::new(502, code, ExecutionOutcome::Indeterminate)
     }
 
-    pub(crate) fn cancelled(outcome: ExecutionOutcome) -> Self {
+    pub fn cancelled(outcome: ExecutionOutcome) -> Self {
         let mut failure = Self::new(502, "execution_indeterminate", outcome);
         failure.cancelled = true;
         failure
+    }
+
+    pub fn force_stopped() -> Self {
+        Self::new(
+            503,
+            "account_force_stopped",
+            ExecutionOutcome::Indeterminate,
+        )
     }
 
     pub(crate) fn transport(error: TransportError, before_headers: bool) -> Self {

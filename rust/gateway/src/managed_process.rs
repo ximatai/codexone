@@ -60,7 +60,10 @@ fn durable_pool_and_governance() {
             "models": (["synth-text", "synth-other"].map(|id| json!({
                 "id": id, "inputMicrosPerMillion": 1, "outputMicrosPerMillion": 1,
             }))),
-            "reservedMicros": 10, "upstreamTransport": "http"
+            "reservedMicros": 10, "upstreamTransport": "http",
+            "imageGeneration": {"defaultModel":"synth-image", "models":[
+                {"id":"synth-image", "inputMicrosPerMillion": 1, "outputMicrosPerMillion": 1}
+            ]}
         })
         .to_string(),
     );
@@ -137,7 +140,8 @@ fn durable_pool_and_governance() {
         "/api/keys",
         Some(ADMIN),
         Some(json!({
-            "principal": "synthetic-client", "models": ["synth-text"], "limits": {"tokens": null, "active": 2}
+            "principal": "synthetic-client", "models": ["synth-text"], "limits": {"tokens": null, "active": 2},
+            "imageGeneration": true, "imageModels": ["synth-image"]
         })),
     );
     assert_eq!(status, 201, "{issued}");
@@ -145,7 +149,7 @@ fn durable_pool_and_governance() {
     let key_id = issued["key"]["id"].as_str().unwrap();
     let (status, models) = request(data, "GET", "/v1/models", Some(key), None);
     assert_eq!(status, 200);
-    assert_eq!(models["data"].as_array().unwrap().len(), 1);
+    assert_eq!(models["data"].as_array().unwrap().len(), 2);
     let denied = json!({"model": "synth-other", "input": "synthetic"});
     assert_eq!(
         request(data, "POST", "/v1/responses", Some(key), Some(denied)).0,
@@ -190,12 +194,103 @@ fn durable_pool_and_governance() {
     assert_eq!(status, 200, "{second}");
     assert_eq!(second["id"], "resp_synth_3");
 
+    let (status, image) = request(
+        data,
+        "POST",
+        "/v1/images/generations",
+        Some(key),
+        Some(json!({"prompt": "synthetic"})),
+    );
+    assert_eq!(status, 200, "{image}");
+    assert_eq!(image["data"].as_array().unwrap().len(), 1);
+
+    let mut revision = enabled["account"]["revision"].as_i64().unwrap();
+    for (index, (path, body)) in [
+        (
+            "/v1/responses",
+            json!({"model": "synth-text", "input": "synthetic-hold"}),
+        ),
+        (
+            "/backend-api/codex/images/edits",
+            json!({"prompt": "synthetic-hold"}),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        thread::scope(|scope| {
+            let pending = scope.spawn(move || request(data, "POST", path, Some(key), Some(body)));
+            let deadline = Instant::now() + WAIT;
+            while recorded.lock().unwrap().len() < index + 5 {
+                assert!(
+                    Instant::now() < deadline,
+                    "waiting for held loopback request"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(active(admin), 1);
+            let force = || {
+                request(
+                    admin,
+                    "POST",
+                    "/api/accounts/account-b/force-stop",
+                    Some(ADMIN),
+                    Some(json!({"revision": revision})),
+                )
+            };
+            assert_eq!(force().0, 409);
+            revision = mode(admin, "disabled", revision);
+            let force = || {
+                request(
+                    admin,
+                    "POST",
+                    "/api/accounts/account-b/force-stop",
+                    Some(ADMIN),
+                    Some(json!({"revision": revision})),
+                )
+            };
+            let (status, cancellation) = force();
+            assert_eq!(status, 200, "{cancellation}");
+            assert_eq!(cancellation["cancellationRequested"], 1);
+            let (status, stopped) = pending.join().unwrap();
+            assert_eq!(status, 503, "{stopped}");
+            assert_eq!(stopped["error"]["code"], "account_force_stopped");
+            let deadline = Instant::now() + WAIT;
+            while active(admin) != 0 {
+                assert!(Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(force().1["cancellationRequested"], 0);
+            revision = mode(admin, "enabled", revision);
+        });
+    }
+
+    let (status, revoked) = request(
+        admin,
+        "PUT",
+        &format!("/api/keys/{key_id}"),
+        Some(ADMIN),
+        Some(
+            json!({"revision": issued["key"]["revision"], "enabled": false, "models": ["synth-text"],
+             "limits": {"tokens": null, "active": 2}}),
+        ),
+    );
+    assert_eq!(status, 200, "{revoked}");
+    assert_eq!(request(data, "GET", "/v1/models", Some(key), None).0, 401);
+
     process.terminate();
     stop.send(()).unwrap();
     worker.join().unwrap();
     assert_eq!(
         *recorded.lock().unwrap(),
-        ["account-a", "account-a", "account-b"]
+        [
+            "account-a",
+            "account-a",
+            "account-b",
+            "account-b",
+            "account-b",
+            "account-b"
+        ]
     );
 
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
@@ -222,13 +317,32 @@ fn durable_pool_and_governance() {
         .unwrap()
         .collect::<rusqlite::Result<_>>()
         .unwrap();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 6);
     for (index, (account, ledger_key, state, usage, outcome)) in rows.iter().enumerate() {
-        assert_eq!(account, ["account-a", "account-a", "account-b"][index]);
+        assert_eq!(
+            account,
+            [
+                "account-a",
+                "account-a",
+                "account-b",
+                "account-b",
+                "account-b",
+                "account-b"
+            ][index]
+        );
         assert_eq!(ledger_key, key_id);
         let outcome: Value = serde_json::from_str(outcome).unwrap();
         if index == 1 {
             assert_eq!(outcome["failure"], "authentication_rejected");
+        } else if index >= 4 {
+            assert_eq!(state, "unknown");
+            assert_eq!(outcome["failure"], "account_unavailable");
+        } else if index == 3 {
+            assert_eq!(state, "settled");
+            assert_eq!(outcome["kind"], "succeeded");
+            let usage: Value = serde_json::from_str(usage.as_ref().unwrap()).unwrap();
+            assert_eq!(usage["imageInputTokens"], 2);
+            assert_eq!(usage["imageOutputTokens"], 3);
         } else {
             assert_eq!(state, "settled");
             assert_eq!(outcome["kind"], "succeeded");
@@ -253,8 +367,33 @@ fn durable_pool_and_governance() {
             |row| row.get::<_, i64>(0),
         )
         .unwrap(),
-        1
+        2
     );
+}
+
+fn active(admin: u16) -> u64 {
+    let (status, accounts) = request(admin, "GET", "/api/accounts", Some(ADMIN), None);
+    assert_eq!(status, 200, "{accounts}");
+    accounts["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["id"] == "account-b")
+        .unwrap()["inFlight"]
+        .as_u64()
+        .unwrap()
+}
+
+fn mode(admin: u16, mode: &str, revision: i64) -> i64 {
+    let (status, response) = request(
+        admin,
+        "PUT",
+        "/api/accounts/account-b",
+        Some(ADMIN),
+        Some(json!({"revision": revision, "mode": mode})),
+    );
+    assert_eq!(status, 200, "{response}");
+    response["account"]["revision"].as_i64().unwrap()
 }
 
 fn private(path: &Path, value: &str) {
@@ -377,7 +516,26 @@ fn request(
     socket.read_to_string(&mut response).unwrap();
     let (head, body) = response.split_once("\r\n\r\n").unwrap();
     let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
-    (status, serde_json::from_str(body).unwrap_or(Value::Null))
+    let value = if head
+        .to_ascii_lowercase()
+        .contains("transfer-encoding: chunked")
+    {
+        let mut remaining = body;
+        let mut bytes = Vec::new();
+        loop {
+            let (size, chunk) = remaining.split_once("\r\n").unwrap();
+            let size = usize::from_str_radix(size, 16).unwrap();
+            if size == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk.as_bytes()[..size]);
+            remaining = &chunk[size + 2..];
+        }
+        serde_json::from_slice(&bytes).unwrap()
+    } else {
+        serde_json::from_str(body).unwrap_or(Value::Null)
+    };
+    (status, value)
 }
 
 fn wait_for_health(port: u16, wanted: u16) {
@@ -392,6 +550,7 @@ fn wait_for_health(port: u16, wanted: u16) {
 }
 
 fn serve(mut socket: TcpStream, capture: &Mutex<Vec<String>>) {
+    socket.set_nonblocking(false).unwrap();
     socket.set_read_timeout(Some(WAIT)).unwrap();
     let mut reader = BufReader::new(&mut socket);
     let mut head = String::new();
@@ -407,20 +566,43 @@ fn serve(mut socket: TcpStream, capture: &Mutex<Vec<String>>) {
         write_response(&mut socket, "200 OK", "application/json", "{}");
         return;
     }
-    assert!(head.starts_with("POST /backend-api/codex/responses "));
+    let image = head.starts_with("POST /backend-api/codex/images/");
+    assert!(image || head.starts_with("POST /backend-api/codex/responses "));
     let account = fields["chatgpt-account-id"];
     assert!(fields["authorization"].starts_with("Bearer ey"));
     let mut body = vec![0; fields["content-length"].parse().unwrap()];
     reader.read_exact(&mut body).unwrap();
     let request: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(request["stream"], true);
-    assert_eq!(request["store"], false);
-    assert_eq!(request["model"], "synth-text");
     let index = {
         let mut capture = capture.lock().unwrap();
         capture.push(account.to_owned());
         capture.len()
     };
+    if index >= 5 {
+        assert!(if image {
+            request["prompt"] == "synthetic-hold"
+        } else {
+            request["input"][0]["content"] == "synthetic-hold"
+        });
+        let mut end = [0];
+        assert_eq!(
+            reader.read(&mut end).unwrap(),
+            0,
+            "upstream did not close after force-stop"
+        );
+        return;
+    }
+    if image {
+        assert_eq!(request["model"], "synth-image");
+        let body = json!({"created": 1, "data": [
+            {"b64_json":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQUDBgAAABBQBh3ab18QAAAABJRU5ErkJggg=="}
+        ], "usage": {"input_tokens": 2, "output_tokens": 3, "input_tokens_details": {"text_tokens":1,"image_tokens":1}}});
+        write_response(&mut socket, "200 OK", "application/json", &body.to_string());
+        return;
+    }
+    assert_eq!(request["stream"], true);
+    assert_eq!(request["store"], false);
+    assert_eq!(request["model"], "synth-text");
     if index == 2 {
         assert_eq!(request["input"][0]["id"], "msg_synth_1");
         write_response(

@@ -99,7 +99,7 @@ impl Managed {
         target: SubscriptionTarget,
         options: KeyOptions,
     ) -> Result<(Self, Option<Arc<Pool>>), ()> {
-        let writer = GovernanceWriter(execution);
+        let writer = GovernanceWriter(execution.clone());
         let keyring = keyring.map(Keyring::new);
         let cipher = || keyring.as_ref().map(Keyring::cipher).transpose();
         let store = Arc::new(Governance::new(writer.clone(), cipher()?));
@@ -125,7 +125,14 @@ impl Managed {
                 turn_states: TurnStateOwners::default(),
             })
         });
-        let api = GovernanceApi::new(store, authorization, Runtime(runtime.clone()));
+        let api = GovernanceApi::new(
+            store,
+            authorization,
+            Runtime {
+                identity: runtime.clone(),
+                execution,
+            },
+        );
         Ok((
             Self {
                 api,
@@ -166,15 +173,26 @@ impl Managed {
     }
 }
 
-struct Runtime(Option<IdentityRuntime<GovernanceWriter>>);
+struct Runtime {
+    identity: Option<IdentityRuntime<GovernanceWriter>>,
+    execution: ExecutionService,
+}
 
 impl AccountRuntime for Runtime {
+    fn in_flight(&self, account: &str) -> usize {
+        self.execution.account_in_flight(account)
+    }
+
+    fn force_stop(&self, account: &str) -> governance::Result<usize> {
+        Ok(self.execution.stop_account_executions(account))
+    }
+
     async fn refresh(
         &self,
         account: String,
         revision: i64,
     ) -> governance::Result<governance::Account> {
-        self.0
+        self.identity
             .as_ref()
             .ok_or(governance::Error::AuthorizationUnavailable)?
             .refresh(account, revision)
@@ -182,7 +200,7 @@ impl AccountRuntime for Runtime {
     }
 
     async fn observability(&self, account: &str) -> governance::Result<serde_json::Value> {
-        self.0
+        self.identity
             .as_ref()
             .ok_or(governance::Error::AuthorizationUnavailable)?
             .observability(account)

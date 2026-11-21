@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -11,6 +11,7 @@ use codexone_account_pool::{Health, PacingWaiters};
 use codexone_storage::{Database, bearer_digest};
 use rusqlite::Transaction;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
+use tokio_util::sync::CancellationToken;
 
 use crate::model::*;
 use crate::reserve::StorageReserve;
@@ -140,6 +141,12 @@ struct Inner {
     pacing: PacingWaiters,
     capacity: u32,
     done: watch::Receiver<bool>,
+    active: Mutex<HashMap<String, ActiveAccountExecution>>,
+}
+
+struct ActiveAccountExecution {
+    account: String,
+    stop: CancellationToken,
 }
 
 impl Inner {
@@ -151,6 +158,12 @@ impl Inner {
 
     fn fail(&self) {
         self.gate().status.send_replace(ExecutionStatus::Failed);
+    }
+
+    fn active(&self) -> MutexGuard<'_, HashMap<String, ActiveAccountExecution>> {
+        self.active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn enqueue(&self, job: Job, admission: bool) -> Result<()> {
@@ -319,6 +332,7 @@ impl ExecutionService {
             pacing: PacingWaiters::default(),
             capacity: capacity as u32,
             done: done_rx,
+            active: Mutex::new(HashMap::new()),
         });
         let exit = WorkerExit {
             inner: Arc::downgrade(&inner),
@@ -373,6 +387,27 @@ impl ExecutionService {
 
     pub fn outstanding(&self) -> usize {
         self.inner.capacity as usize - self.inner.tickets.available_permits()
+    }
+
+    pub fn account_in_flight(&self, account: &str) -> usize {
+        self.inner
+            .active()
+            .values()
+            .filter(|entry| entry.account == account)
+            .count()
+    }
+
+    /// Call inside the same writer command that verifies the disabled mode and revision.
+    pub fn stop_account_executions(&self, account: &str) -> usize {
+        let active = self.inner.active();
+        let mut count = 0;
+        for entry in active.values().filter(|entry| entry.account == account) {
+            if !entry.stop.is_cancelled() {
+                count += 1;
+                entry.stop.cancel();
+            }
+        }
+        count
     }
 
     pub fn stop_admission(&self) {
@@ -789,6 +824,19 @@ impl ExecutionService {
                 ControlFlow::Break(delay) => return Ok(ControlFlow::Break(delay)),
             };
             tx.commit()?;
+            // Registration is ordered with account mode and force-stop commands on
+            // this writer. The finalization ticket bounds the live registry.
+            let stop = admission.account_snapshot.as_ref().map(|_| {
+                let stop = CancellationToken::new();
+                service.inner.active().insert(
+                    admission.attempt.clone(),
+                    ActiveAccountExecution {
+                        account: admission.owner.identity.clone(),
+                        stop: stop.clone(),
+                    },
+                );
+                stop
+            });
             // If the admission future is cancelled after commit, dropping the undelivered
             // lease transfers finalization to the worker just like any other cancellation.
             Ok(ControlFlow::Continue(Execution {
@@ -798,6 +846,7 @@ impl ExecutionService {
                 evidence: None,
                 dispatched: false,
                 binding_failed: false,
+                stop,
             }))
         })
         .await
@@ -872,6 +921,7 @@ pub struct Execution {
     evidence: Option<UsageEvidence>,
     dispatched: bool,
     binding_failed: bool,
+    stop: Option<CancellationToken>,
 }
 
 impl Execution {
@@ -879,10 +929,23 @@ impl Execution {
         &self.admission
     }
 
+    pub fn account_stop_token(&self) -> Option<&CancellationToken> {
+        self.stop.as_ref()
+    }
+
+    pub fn was_force_stopped(&self) -> bool {
+        self.stop
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+    }
+
     /// Call immediately before dispatch. This authorizes one logical upstream operation.
     pub fn begin_dispatch(&mut self) -> Result<()> {
         if self.dispatched {
             return Err(Error::Conflict);
+        }
+        if self.was_force_stopped() {
+            return Err(Error::AccountForceStopped);
         }
         match self.service.status() {
             ExecutionStatus::Accepting => {
@@ -964,13 +1027,32 @@ impl Execution {
         )))
     }
 
-    fn handoff(&mut self, outcome: Option<Outcome>) -> Result<()> {
+    fn handoff(&mut self, mut outcome: Option<Outcome>) -> Result<()> {
         let Some(ticket) = self.ticket.take() else {
             return Ok(());
         };
         let attempt = self.admission.attempt.clone();
         let evidence = self.evidence.take();
         let inner = self.service.inner.clone();
+        if self.stop.is_some() {
+            let stopped = inner
+                .active()
+                .remove(&attempt)
+                .is_some_and(|entry| entry.stop.is_cancelled());
+            if stopped {
+                let at = outcome.as_ref().map_or_else(
+                    || system_time().div_euclid(1_000_000).max(1),
+                    |outcome| outcome.at_unix_seconds,
+                );
+                let mut updated = Outcome::new(Some(Failure::AccountUnavailable), at);
+                if let Some(previous) = outcome {
+                    updated.first_event_milliseconds = previous.first_event_milliseconds;
+                    updated.total_milliseconds = previous.total_milliseconds;
+                    updated.actual_service_tier = previous.actual_service_tier;
+                }
+                outcome = Some(updated);
+            }
+        }
         self.service.inner.enqueue(
             Box::new(move |writer| {
                 let _ticket = ticket;

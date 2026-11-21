@@ -11,6 +11,7 @@ codexone-execution = { path = "../execution" }
 codexone-http-upstream = { path = "../http-upstream" }
 codexone-images = { path = "../images" }
 http = "1"
+tokio = { version = "1", features = ["macros"] }
 
 [dev-dependencies]
 rusqlite = { version = "0.43", features = ["bundled", "wal"] }
