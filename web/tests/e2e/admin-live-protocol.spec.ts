@@ -1,7 +1,8 @@
+import { initialSections } from "./overview-snapshot";
 import { expect, test } from "./fixtures";
 import { keySummary } from "../../src/features/system-status/round2-api";
 import { reviewFixture } from "./ui-review-fixture";
-import type { Page, WebSocketRoute } from "@playwright/test";
+import type { WebSocketRoute } from "@playwright/test";
 
 test("live metadata preserves content, invalid sections fall back, and revocation clears private data", async ({
   page,
@@ -154,50 +155,6 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
   );
   await expect(page.getByRole("button", { name: "管理员登录" })).toBeVisible();
 });
-
-async function initialSections(page: Page) {
-  const data = await page.evaluate(async () => {
-    const paths: Record<string, string> = {
-      system: "/api/system",
-      inFlight: "/api/usage/in-flight",
-      daily: "/api/usage/daily?days=7",
-      keys: "/api/usage/keys?includeArchived=false",
-      accounts: "/api/accounts",
-      storage: "/api/runtime/storage",
-      attention: "/api/attention",
-      headroom: "/api/usage/headroom",
-    };
-    return Object.fromEntries(
-      await Promise.all(
-        Object.entries(paths).map(async ([name, path]) => [
-          name,
-          await (await fetch(path)).json(),
-        ]),
-      ),
-    );
-  });
-  data.inFlight = {
-    ...data.inFlight,
-    recentlyFinished: [],
-    clients: [],
-    overflow: 0,
-  };
-  const now = Date.now() / 1000;
-  const sections = Object.fromEntries(
-    Object.entries(data).map(([name, value]) => [
-      name,
-      {
-        version: 1,
-        sampledAtUnixSeconds: now,
-        lastSuccessAt: now,
-        freshness: "fresh",
-        code: null,
-        data: value,
-      },
-    ]),
-  );
-  return sections;
-}
 
 test("HTTP pending over an old snapshot marks the module and availability summary stale", async ({
   page,
