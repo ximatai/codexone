@@ -10,7 +10,9 @@
 - [x] 只读观察中，持久账本出现预热失败，且同一窗口出现 `warmup_websocket_timing` 固定分类。两者使用聚合核对，实际帧字段、顺序及逐请求关联尚未取得。
 - [x] 固定 Swift 与 `56ef39f` Rust 对照合法耗时帧、顺序、预热终态及同连接生成。
 - [x] 验证有限耗时封套、夹带业务数据拒绝、仅耗时帧后 1009 保留未知，以及缺失用量与不重放。
-- [ ] 在新候选中核对自然预热的账本和固定分类。
+- [x] 新候选的只读观察仍出现预热失败和 `warmup_websocket_timing`。固定公开源码和上游测试已确认嵌套遥测的用法，真实封套仍未知。
+- [x] 对照官方测试封套、未来遥测字段以及明确业务字段的根位置；保留终态、续接、用量及无重放测试。
+- [ ] 在透明转发候选中核对自然预热的账本和固定分类。
 
 ## 耗时帧对照
 
@@ -31,6 +33,14 @@ Swift 通过通用 WS 路由和 provider 观察处理耗时帧，预热下发处
 Rust WebSocket crate 28 项、共享 `verify_websocket.py`、`verify_client_protocol.py --expect-provider-eof` 和 `verify_text_contract.py --case extension` 通过。共享预热夹具保留开关对照，在旧 Rust 第二轮明确复现失败，Swift 和候选两轮均通过。
 
 真实样本只提供同窗固定原因分类，未确认具体封套、序列或与该条账本的逐一关联。自然预热若继续报同一分类，仍需判断是否存在其他成员、其他时间字段或顺序差异。若出现新的拒绝分类或仍缺终态，则需核对此后帧或连接结果，单凭合成对照无法确定兼容边界。
+
+## 透明转发对照
+
+2026-11-21，macOS arm64，原生 WS 使用合成订阅上游。固定 Rust `24d67c2` 只在打开新形状时出现 `warmup_websocket_timing`，Swift 与透明转发候选均完整下发官方 `timing_metrics` 的合成结构、两个 `critical_path` 候选层级、旧 `duration_ms` 和独立的未来字段。共享用例在 created 前后注入不同结构，逐帧比对客户端收到的 JSON；嵌套 `response`、`usage`、`headers`、`output` 和 `safety_buffering` 沿遥测原样送达。合成预热完成且用量为空时账本为 `unknown/succeeded`；同一 socket 上以预热 ID 生成，随后以正式响应 ID 续接，两笔均完整结算，各客户端 create 派发一次。
+
+候选继续拒绝带顶层输出、响应/用量、headers 或 safety_buffering 的活动预热 timing，已有归属的晚到 timing 如携带顶层业务字段则被隔离，不影响已结束预热。单测验证透传计入累计预算且不刷新有效进展、不建立响应归属。合成断线对照中，未收应用事件直接收到 1009 保持既有 413 和完整零用量证据；只在 1009 前插入合法嵌套 timing，客户端先收到 timing，随后收到 `execution_indeterminate`，账本为 `unknown/failed` 且无用量。两组均单次派发。
+
+Rust WebSocket crate 29 项、共享 `verify_websocket.py`、`verify_client_protocol.py --expect-provider-eof`、`verify_text_contract.py --case extension` 和文档/架构检查通过。更新的共享用例在 `24d67c2` 的嵌套 timing 阶段明确复现失败，在 Swift 与候选上完整通过。真实字段、真实事件顺序和部署后恢复仍待自然样本核对。
 
 ## 相关文档
 

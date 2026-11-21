@@ -95,7 +95,7 @@ HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接�
 
 完整 inline 消息、function/custom tool 结果、additional_tools 包及携完整 encrypted_content 的 reasoning/compaction 中的 id 为客户端本地关联标签，发送上游前移除。只有能让提供者读取存储状态的引用是硬引用：previous_response_id、item_reference、仅凭 ID 指向的 image_generation_call（无 result）与 reasoning（无 encrypted_content）；它们必须已绑定到当前主体/身份，否则 dispatch 前拒绝。call_id、加密上下文指纹和其他条目 ID 是路由提示（最近 64 个）：账号池中已知时优先选择其账号，未知或属于他人时忽略，不拒绝也不建立读取权。加密内容只能由签发它的上游账号解密，跨账号时由提供者拒绝。
 
-WS generate:false 为独立 warmup 模式，普通 HTTP 不接受 generate 控制；预热生命周期事件只允许无生成内容的响应，`response.output` 可省略、为 null 或为空数组，沿用原封套形状。空输出不能替代可信用量；缺失用量仍为未知。Rust 原生 WS 在预热期间可按既有归属及顺序规则透传 `responsesapi.websocket_timing`，封套限于事件名、JSON 数值 `duration_ms` 和可选的有效 `stream_id`。该帧不建立响应归属、进展或结算证据，仍关闭未处理的 1009 例外。Rust 在现有私有 `invalid_upstream_warmup` 拒绝日志中使用固定原因区分非空/畸形输出、已知生成事件、响应元数据、WebSocket 耗时事件和其他非生命周期事件。原因不带上游字段值。
+WS generate:false 为独立 warmup 模式，普通 HTTP 不接受 generate 控制；预热生命周期事件只允许无生成内容的响应，`response.output` 可省略、为 null 或为空数组，沿用原封套形状。空输出不能替代可信用量；缺失用量仍为未知。Rust 原生 WS 在预热期间按既有路由、归属、顺序和资源规则透传 `responsesapi.websocket_timing`，保留未知遥测成员及嵌套结构。已支持的事件默认保留这些数据，转发与采信分别判断。隔离顶层响应、用量、错误、生成输出、业务控制，以及客户端可直接读取的 headers 和 safety_buffering。嵌套遥测里的同名字段按该遥测封套处理。符合既有路由规则的 `stream_id`、`response_id` 可用于交付，但 timing 不建立首次响应、有效进展、对象归属、用量或终态。它仍关闭未处理的 1009 例外。已结束的预热遇到带上述顶层业务成员的归属后续 timing 帧时隔离该帧。Rust 在现有私有 `invalid_upstream_warmup` 拒绝日志中使用固定原因区分非空/畸形输出、已知生成事件、响应元数据、WebSocket 耗时事件和其他非生命周期事件。原因不带上游字段值。
 
 独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪、不改写，不把 compaction ID 当 previous_response_id；窗口内对象先作为本执行的路由证据幂等绑定，再整体返回。压缩请求沿 64 MiB 请求、32 MiB 响应、总期限及失败语义；未支持模式/输入不发送。
 

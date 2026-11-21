@@ -737,6 +737,12 @@ async fn native_warmup_and_overlapping_lanes_preserve_fifo_and_late_controls() {
         );
     }
 
+    let unsafe_late = r#"{"type":"responsesapi.websocket_timing","response_id":"resp_warmup","headers":{"openai-model":"synthetic"}}"#;
+    let late = r#"{"type":"responsesapi.websocket_timing","response_id":"resp_warmup","timing_metrics":{"engine_service_total_ms":1}}"#;
+    provider.send(text(unsafe_late)).await.unwrap();
+    provider.send(text(late)).await.unwrap();
+    assert_eq!(read_json(&mut client).await, json(late));
+
     for (lane, input) in [("alpha", "one"), ("alpha", "next"), ("beta", "parallel")] {
         client.send(text(&format!(r#"{{"type":"response.create","model":"example","stream_id":"{lane}","input":"{input}"}}"#))).await.unwrap();
     }
@@ -836,7 +842,19 @@ async fn native_warmup_rejects_generated_content_and_reports_fixed_reasons() {
             "warmup_response_metadata",
         ),
         (
-            r#"{"type":"responsesapi.websocket_timing","duration_ms":"synthetic"}"#,
+            r#"{"type":"responsesapi.websocket_timing","timing_metrics":{},"headers":{"openai-model":"synthetic"}}"#,
+            "warmup_websocket_timing",
+        ),
+        (
+            r#"{"type":"responsesapi.websocket_timing","timing_metrics":{},"safety_buffering":null}"#,
+            "warmup_websocket_timing",
+        ),
+        (
+            r#"{"type":"responsesapi.websocket_timing","timing_metrics":{},"usage":{"input_tokens":9}}"#,
+            "warmup_websocket_timing",
+        ),
+        (
+            r#"{"type":"responsesapi.websocket_timing","timing_metrics":{},"generate":true}"#,
             "warmup_websocket_timing",
         ),
         (
@@ -845,10 +863,6 @@ async fn native_warmup_rejects_generated_content_and_reports_fixed_reasons() {
         ),
         (
             r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25,"response":{"id":"resp_case","usage":{"input_tokens":9}}}"#,
-            "warmup_websocket_timing",
-        ),
-        (
-            r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25,"data":{"delta":"synthetic"}}"#,
             "warmup_websocket_timing",
         ),
         (
@@ -902,8 +916,7 @@ async fn native_warmup_timing_before_1009_keeps_execution_indeterminate() {
     let app = Arc::new(TestApp::default());
     let (mut client, mut provider, task) = native_client(app.clone()).await;
     let create = r#"{"type":"response.create","model":"example","generate":false,"input":[],"stream_id":"telemetry"}"#;
-    let timing =
-        r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25,"stream_id":"telemetry"}"#;
+    let timing = r#"{"type":"responsesapi.websocket_timing","timing_metrics":{"engine_service_total_ms":1.25},"stream_id":"telemetry"}"#;
     client.send(text(create)).await.unwrap();
     let mut provider = provider_ready(&mut provider).await;
     assert_eq!(

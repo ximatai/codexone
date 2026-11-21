@@ -19,8 +19,13 @@ const WEBSOCKET_TIMING: &str = "responsesapi.websocket_timing";
 
 pub(crate) struct Turns {
     pub active: HashMap<String, Turn>,
-    ended: HashMap<String, String>,
+    ended: HashMap<String, EndedTurn>,
     history: VecDeque<String>,
+}
+
+struct EndedTurn {
+    lane: String,
+    warmup: bool,
 }
 
 pub(crate) struct Turn {
@@ -98,16 +103,22 @@ impl Turns {
     pub fn remove(&mut self, lane: &str, remember: bool) -> Option<Turn> {
         let turn = self.active.remove(lane)?;
         if remember && let Some(id) = &turn.response_id {
-            self.remember(id.clone(), lane);
+            self.remember(id.clone(), lane, turn.warmup);
         }
         Some(turn)
     }
 
-    fn remember(&mut self, id: String, lane: &str) {
+    fn remember(&mut self, id: String, lane: &str, warmup: bool) {
         if self.ended.contains_key(&id) {
             return;
         }
-        self.ended.insert(id.clone(), lane.to_owned());
+        self.ended.insert(
+            id.clone(),
+            EndedTurn {
+                lane: lane.to_owned(),
+                warmup,
+            },
+        );
         self.history.push_back(id);
         if self.history.len() > HISTORY_LIMIT {
             self.ended
@@ -135,6 +146,7 @@ impl Turns {
     pub fn observe(&mut self, document: &JsonValue, bytes: usize) -> Result<Route, ProtocolError> {
         let kind = event_type(document)?;
         let semantics = EventSemantics::classify(document);
+        let is_timing = kind == WEBSOCKET_TIMING;
         let supplied_lane = websocket_lane(document)
             .map_err(|_| ProtocolError::new(502, "invalid_upstream_lane"))?;
         let explicit_lane = document.get("stream_id").is_some();
@@ -154,11 +166,12 @@ impl Turns {
         }
         let identity = correlated.or(embedded);
         if let Some(owner) = identity.and_then(|identity| self.ended.get(identity)) {
-            return Ok(if kind == "response.created" {
-                Route::Ignore
-            } else {
-                Route::Detached(owner.clone())
-            });
+            if kind == "response.created"
+                || (owner.warmup && is_timing && has_timing_business_members(document))
+            {
+                return Ok(Route::Ignore);
+            }
+            return Ok(Route::Detached(owner.lane.clone()));
         }
         let owner = identity.and_then(|identity| {
             self.active.iter().find_map(|(lane, turn)| {
@@ -240,8 +253,9 @@ impl Turns {
             return Ok(Route::Ignore);
         }
 
-        let warmup_timing = turn.warmup && kind == WEBSOCKET_TIMING && is_duration_frame(document);
-        if turn.warmup
+        let warmup = turn.warmup;
+        let warmup_timing = warmup && is_timing && !has_timing_business_members(document);
+        if warmup
             && kind != "error"
             && !semantics.connection_metadata
             && !warmup_timing
@@ -261,7 +275,7 @@ impl Turns {
         if terminal || provider_error {
             turn.provider_done = true;
             if let Some(id) = turn.response_id.clone() {
-                self.remember(id, &lane);
+                self.remember(id, &lane, warmup);
             }
         }
         Ok(Route::Turn {
@@ -294,13 +308,30 @@ fn warmup_rejection(
     }
 }
 
-fn is_duration_frame(document: &JsonValue) -> bool {
-    matches!(document.get("duration_ms"), Some(JsonValue::Number(_)))
-        && document.as_object().is_some_and(|fields| {
-            fields
-                .iter()
-                .all(|(key, _)| matches!(key, "type" | "duration_ms" | "stream_id"))
-        })
+fn has_timing_business_members(document: &JsonValue) -> bool {
+    // These are business or control members at their protocol positions. The
+    // official client can read headers and safety_buffering before event-kind
+    // dispatch. Leave opaque telemetry subtrees alone.
+    [
+        "headers",
+        "safety_buffering",
+        "response",
+        "usage",
+        "error",
+        "output",
+        "item",
+        "item_id",
+        "call_id",
+        "part",
+        "delta",
+        "text",
+        "input",
+        "model",
+        "tools",
+        "generate",
+    ]
+    .iter()
+    .any(|key| document.get(key).is_some())
 }
 
 fn id(value: &JsonValue) -> Option<&str> {
@@ -346,5 +377,55 @@ pub(crate) fn provider_failure(event: &JsonValue) -> ProviderFailure {
         client_retry_after: None,
         cooldown_seconds: None,
         explicit_rejection: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warmup_timing_consumes_budget_without_refreshing_progress() {
+        let mut turns = Turns::new();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        turns
+            .active
+            .insert(String::new(), Turn::new(deadline, true));
+        let timing = decode_event(
+            br#"{"type":"responsesapi.websocket_timing","timing_metrics":{"response":{"id":"synthetic"}}}"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            turns.observe(&timing, 128),
+            Ok(Route::Turn {
+                warmup_timing: true,
+                terminal: false,
+                ..
+            })
+        ));
+        assert!(turns.active[""].processed);
+        assert!(turns.active[""].response_id.is_none());
+        assert!(turns.active[""].last_progress.is_none());
+
+        let created = decode_event(
+            br#"{"type":"response.created","response":{"id":"resp_warmup","output":[]}}"#,
+        )
+        .unwrap();
+        turns.observe(&created, 128).unwrap();
+        let last_progress = turns.active[""].last_progress.unwrap();
+
+        let event_bytes = codexone_responses::MAX_EVENT_BYTES;
+        for _ in 0..(MAX_RESPONSE_BYTES / event_bytes - 1) {
+            turns.observe(&timing, event_bytes).unwrap();
+        }
+        let remaining = MAX_RESPONSE_BYTES - turns.active[""].bytes;
+        assert!(remaining <= event_bytes);
+        turns.observe(&timing, remaining).unwrap();
+        assert_eq!(turns.active[""].last_progress, Some(last_progress));
+        assert!(matches!(
+            turns.observe(&timing, 128),
+            Err(error) if error.code == "upstream_response_too_large"
+        ));
     }
 }
