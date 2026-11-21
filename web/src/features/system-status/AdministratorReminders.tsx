@@ -32,15 +32,8 @@ export function AdministratorReminders({
   const free = storage?.availableBytes;
   const service =
     availability?.to === "/?storage=details" ? null : availability;
-  const showBackupDisabled = backupDisabled && !backupUnconfirmed;
   const showBackupSize = backupSizeWarning && !backupUnconfirmed;
-  if (
-    !disk &&
-    !service &&
-    !backupOverdue &&
-    !showBackupDisabled &&
-    !showBackupSize
-  )
+  if (!disk && !service && !backupOverdue && !backupDisabled && !showBackupSize)
     return null;
 
   return (
@@ -89,9 +82,7 @@ export function AdministratorReminders({
             </Anchor>
           </Alert>
         )}
-        {showBackupDisabled && (
-          <Alert color="orange">在线定时备份未启用。</Alert>
-        )}
+        {backupDisabled && <Alert color="orange">在线定时备份未启用。</Alert>}
         {showBackupSize && (
           <Alert color="orange">
             备份占用已超过提醒阈值，请检查存储容量，并将备份和主密钥分别异地保存。

@@ -9,8 +9,17 @@ test("backup attention opens storage details with last success on desktop and mo
   const lastSuccess = Math.floor(Date.now() / 1000) - 80 * 3600;
   let mode: "backup" | "blocked" | "disabled" | "normal" = "backup";
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.routeWebSocket("**/api/overview/live", (socket) =>
+    socket.close({ code: 1013 }),
+  );
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === "/api/attention" && mode === "disabled") {
+      return route.fulfill({
+        status: 429,
+        json: { error: { code: "attention_query_capacity" } },
+      });
+    }
     const data: Record<string, unknown> = {
       "/api/session": { authenticated: true, csrf: "ac1_" + "a".repeat(43) },
       "/api/system": { service: "codexone", ready: true, checks: [] },
@@ -51,19 +60,7 @@ test("backup attention opens storage details with last success on desktop and mo
                   sinceUnixSeconds: null,
                 },
               ]
-            : mode === "disabled"
-              ? [
-                  {
-                    kind: "backup_disabled",
-                    severity: "warning",
-                    subjectType: "system",
-                    subjectID: null,
-                    subjectName: null,
-                    detail: {},
-                    sinceUnixSeconds: null,
-                  },
-                ]
-              : [],
+            : [],
       },
       "/api/runtime/storage": {
         pressure: mode === "blocked" ? "blocked" : "normal",
@@ -117,6 +114,7 @@ test("backup attention opens storage details with last success on desktop and mo
   await expectNoHorizontalOverflow(page);
   mode = "disabled";
   await page.reload();
+  await expect(page.getByLabel("概览连接状态")).toContainText("运行提醒");
   await expect(reminders.getByText("在线定时备份未启用。")).toBeVisible();
   mode = "normal";
   await page.reload();
