@@ -719,6 +719,7 @@ export function ModelDirectory() {
         </Stack>
       )}
       <Modal
+        removeScrollProps={{ removeScrollBar: false }}
         opened={profileReview !== null}
         onClose={() => !working && setProfileReview(null)}
         title="更新模型资料"
@@ -792,6 +793,7 @@ export function ModelDirectory() {
           })()}
       </Modal>
       <Modal
+        removeScrollProps={{ removeScrollBar: false }}
         opened={rateEdit !== null}
         onClose={() => !working && setRateEdit(null)}
         title="编辑模型费率"
@@ -821,6 +823,7 @@ export function ModelDirectory() {
         )}
       </Modal>
       <Modal
+        removeScrollProps={{ removeScrollBar: false }}
         opened={reasoning !== null}
         onClose={() => !working && setReasoning(null)}
         title="推理设置"
@@ -855,6 +858,7 @@ export function ModelDirectory() {
         )}
       </Modal>
       <Modal
+        removeScrollProps={{ removeScrollBar: false }}
         opened={selected !== null}
         onClose={() => !working && setSelected(null)}
         title={
