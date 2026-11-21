@@ -16,7 +16,7 @@ pub use tokio::time::Instant;
 pub use tokio_rustls::rustls::RootCertStore;
 pub use tokio_util::sync::CancellationToken;
 pub use upload::{RequestBody, UPLOAD_CHUNK_BYTES, UploadError};
-pub use upload_diagnostics::CompressionTime;
+pub use upload_diagnostics::{CompressionTime, UploadDiagnostics};
 
 use deadline::Progress;
 use http::header::{
@@ -49,6 +49,7 @@ pub enum Error {
     Tls,
     Upload,
     Transport,
+    IncompleteResponseHeaders,
     ResponseBody,
     ResponseTooLarge,
     Cancelled,
@@ -69,6 +70,7 @@ impl fmt::Display for Error {
             Self::Tls => "upstream TLS handshake failed",
             Self::Upload => "upstream request body failed",
             Self::Transport => "upstream HTTP exchange failed before response headers",
+            Self::IncompleteResponseHeaders => "upstream HTTP response headers were incomplete",
             Self::ResponseBody => "upstream response body interrupted",
             Self::ResponseTooLarge => "upstream response body exceeded its limit",
             Self::Cancelled => "upstream HTTP exchange cancelled",
@@ -607,6 +609,8 @@ fn classify(error: hyper::Error, fallback: Error) -> Error {
         == Some(&Error::Upload)
     {
         Error::Upload
+    } else if fallback == Error::Transport && error.is_incomplete_message() {
+        Error::IncompleteResponseHeaders
     } else {
         fallback
     }

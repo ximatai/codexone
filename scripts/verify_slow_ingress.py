@@ -17,6 +17,9 @@ from verify_protocol import TOKEN, start, stop, dump_gateway_failure
 from verify_json_order import wire, EVENT
 
 
+DROP_INPUT = 'synthetic-drop-before-headers'
+
+
 class Provider(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -28,7 +31,7 @@ class Provider(BaseHTTPRequestHandler):
         document = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         with self.server.guard:
             self.server.calls += 1
-        if document['input'] == 'drop':
+        if document['input'] == DROP_INPUT:
             return
         body = wire(EVENT['response'])
         self.send_response(200)
@@ -102,8 +105,10 @@ def main():
             upstreamBaseURL=f'http://127.0.0.1:{server.server_port}/v1', upstreamTransport='http')))
         config.chmod(0o600)
         process = None
+        logs = b''
         try:
             process, ports = start(str(args.binary.resolve()), config, root)
+            process.gateway_redactions += ('synthetic-race', DROP_INPUT)
             port = ports['data']
             with ThreadPoolExecutor(max_workers=4) as workers:
                 jobs = [workers.submit(paced, port, chunked) for chunked in (False, True)]
@@ -128,32 +133,45 @@ def main():
                 peer.sendall(request_head(len(body)) + body)
                 assert read_reply(peer)[0] == 200
             expected += 1
-            # A raw unmapped AHC failure preserves unknown and returns a complete JSON envelope.
-            body = wire(dict(model='synthetic-order', input='drop', stream=False))
+            # A provider disconnect before HTTP response headers preserves unknown.
+            body = wire(dict(model='synthetic-order', input=DROP_INPUT, stream=False))
             with socket.create_connection(('127.0.0.1', port), timeout=10) as peer:
                 peer.sendall(request_head(len(body)) + body)
                 status, document = read_reply(peer)
                 assert status == 502 and document['error']['code'] == 'execution_indeterminate'
+                request_id = document['error']['request_id']
             expected += 1
             deadline = time.monotonic() + 5
             while True:
                 with sqlite3.connect(root / 'state/core.sqlite') as db:
-                    rows = db.execute('SELECT state,usage_json,outcome_json FROM attempts ORDER BY rowid').fetchall()
+                    rows = db.execute('SELECT state,usage_json,outcome_json,request_id FROM attempts ORDER BY rowid').fetchall()
                 if len(rows) == expected and all(row[0] != 'intent' for row in rows):
                     break
                 assert time.monotonic() < deadline, rows
                 time.sleep(.02)
             assert server.calls == expected == len(rows), (server.calls, expected, rows)
             assert all(row[0] == 'settled' for row in rows[:-1])
-            assert rows[-1][0] == 'unknown' and rows[-1][1] is None
+            state, usage, outcome, recorded_id = rows[-1]
+            assert state == 'unknown' and usage is None
+            assert json.loads(outcome)['failure'] == 'indeterminate' and recorded_id == request_id
             process.terminate(); process.wait(10)
             logs = process.stdout.read()
-            assert b'cause=remoteConnectionClosed' in logs, logs[-4000:]
-            assert TOKEN.encode() not in logs and b'synthetic-race' not in logs
+            causes = 0
+            for line in logs.splitlines():
+                fields = line.split()
+                if b'request_id=' + request_id.encode() not in fields:
+                    continue
+                # Count the fixed per-backend cause on the request that failed.
+                if b'Protocol request rejected' in line and b'code=execution_indeterminate' in fields:
+                    causes += b'cause=remoteConnectionClosed' in fields
+                elif b'Upstream failed before first event' in line and b'stage=http_request' in fields:
+                    causes += b'cause=upstream_response_headers_incomplete' in fields
+            assert causes == 1, 'Missing or repeated bounded disconnect cause for the 502 request'
+            assert all(marker.encode() not in logs for marker in (TOKEN, 'synthetic-race', DROP_INPUT))
             print('PASS: concurrent paced Content-Length/chunked >10s, timeout/end races, 408 JSON, cancellation/budget release, unmapped cause, single dispatch and ledger')
         except BaseException:
             if process:
-                dump_gateway_failure(process)
+                dump_gateway_failure(process, output=logs)
             raise
         finally:
             if process:

@@ -394,6 +394,7 @@ fn transport_cause(error: codexone_http_upstream::Error) -> &'static str {
         ProxyAuthenticationRequired => "upstream_proxy_authentication_required",
         ProxyConnect => "upstream_proxy_failed",
         Tls => "tls_verification_failed",
+        IncompleteResponseHeaders => "upstream_response_headers_incomplete",
         FirstResponseTimeout => "execution_first_response_timeout",
         ProgressTimeout => "execution_progress_timeout",
         DeadlineExceeded => "execution_deadline_exceeded",

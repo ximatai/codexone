@@ -365,7 +365,7 @@ async fn disconnect_before_headers_never_replays_the_request() {
             )
             .await
             .unwrap_err(),
-        Error::Transport
+        Error::IncompleteResponseHeaders
     );
     finish(server).await;
 }
