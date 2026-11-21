@@ -165,3 +165,54 @@ fn only_baseline_blank_line_delimiters_dispatch() {
     );
     assert_eq!(decoder.next_frame(&mut chunk), Err(SseError::InvalidEvent));
 }
+
+#[test]
+fn batch_scanning_preserves_limit_precedence_and_unconsumed_bytes() {
+    let cases = [
+        // Cumulative exhaustion happens before the first byte beyond event slack.
+        (
+            b"abcdefghijkTAIL".as_slice(),
+            7,
+            11,
+            11,
+            SseError::ResponseTooLarge,
+        ),
+        (
+            b"abcdefghijkTAIL".as_slice(),
+            7,
+            12,
+            12,
+            SseError::EventTooLarge,
+        ),
+        // A complete oversize frame fails at its delimiter, even below that slack.
+        (b"abc\n\nTAIL".as_slice(), 1, 5, 5, SseError::EventTooLarge),
+        (
+            b"abc\n\nTAIL".as_slice(),
+            1,
+            4,
+            4,
+            SseError::ResponseTooLarge,
+        ),
+        // An invalid event consumes its delimiter but leaves later bytes alone.
+        (
+            b"data: +\r\n\r\nTAIL".as_slice(),
+            64,
+            64,
+            11,
+            SseError::InvalidEvent,
+        ),
+    ];
+    for (stream, event_limit, total_limit, consumed, expected) in cases {
+        for split in 0..=stream.len() {
+            let mut decoder = SseDecoder::new(event_limit, total_limit);
+            let mut first = &stream[..split];
+            let mut second = &stream[split..];
+            let result = match decoder.next_frame(&mut first) {
+                Ok(None) => decoder.next_frame(&mut second),
+                result => result,
+            };
+            assert_eq!(result, Err(expected), "split at {split}");
+            assert_eq!(first.len() + second.len(), stream.len() - consumed);
+        }
+    }
+}

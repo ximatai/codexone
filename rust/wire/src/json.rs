@@ -187,10 +187,15 @@ impl JsonValue {
         root_keys: &[&str],
     ) -> Result<Self, JsonError> {
         validate_depth(bytes)?;
+        // Foundation recognizes this nonstandard UTF-32LE marker, but the Swift
+        // order scanner falls back to sorted keys. Match that output while
+        // checking selected root keys against the actual UTF-32LE document.
+        let sorted_objects = bytes.starts_with(b"\xfe\xff\0\0");
         let normalized = normalize_encoding(bytes)?;
         let mut parser = Parser {
             remaining: normalized.as_ref(),
             root_keys,
+            sorted_objects,
         };
         let value = parser.value(0, true)?;
         parser.whitespace();
@@ -322,9 +327,7 @@ fn normalize_encoding(bytes: &[u8]) -> Result<Cow<'_, [u8]>, JsonError> {
         [0, 0, 0xfe, 0xff, rest @ ..] => (4, false, rest),
         // Foundation interprets the standard UTF-32LE BOM as UTF-16LE here.
         [0xff, 0xfe, 0, 0, ..] => return Err(JsonError::InvalidJson),
-        // Foundation accepts this nonstandard marker as UTF-32LE, but the Swift
-        // order scanner then skips the root duplicate check. Reject the marker.
-        [0xfe, 0xff, 0, 0, ..] => return Err(JsonError::InvalidJson),
+        [0xfe, 0xff, 0, 0, rest @ ..] => (4, true, rest),
         [0xfe, 0xff, rest @ ..] => (2, false, rest),
         [0xff, 0xfe, rest @ ..] => (2, true, rest),
         [0, 0, 0, first, ..] if *first != 0 => (4, false, bytes),
@@ -378,6 +381,7 @@ fn bytes_chunks(bytes: &[u8], width: usize) -> Result<std::slice::ChunksExact<'_
 struct Parser<'a, 'keys> {
     remaining: &'a [u8],
     root_keys: &'keys [&'keys str],
+    sorted_objects: bool,
 }
 
 impl<'a> Parser<'a, '_> {
@@ -408,31 +412,45 @@ impl<'a> Parser<'a, '_> {
         self.whitespace();
         while !self.consume(b"}") {
             let (token, escaped) = self.string_token()?;
-            let key = Key::new(decode_string(token, escaped)?);
+            let key = if retain || !self.sorted_objects {
+                let key = decode_string(token, escaped)?;
+                retain.then(|| Key::new(key))
+            } else {
+                None
+            };
             self.whitespace();
             if !self.consume(b":") {
                 return Err(JsonError::InvalidJson);
             }
 
-            if retain && !object.0.contains_key(key.as_ref()) {
-                let value = self.value(depth + 1, true)?;
-                object.0.insert(key, value);
-            } else {
-                if depth == 0
-                    && self
-                        .root_keys
-                        .iter()
-                        .any(|name| canonical(name) == key.as_ref())
-                {
-                    return Err(JsonError::InvalidJson);
+            if let Some(key) = key {
+                if object.0.contains_key(key.as_ref()) {
+                    if depth == 0
+                        && self
+                            .root_keys
+                            .iter()
+                            .any(|name| canonical(name) == key.as_ref())
+                    {
+                        return Err(JsonError::InvalidJson);
+                    }
+                    self.value(depth + 1, false)?;
+                } else {
+                    let value = self.value(depth + 1, true)?;
+                    object.0.insert(key, value);
                 }
-                // Foundation scans ignored members for structure, decoding their keys but
-                // leaving scalar values unconverted.
+            } else {
+                // Scan discarded values for structure. Only the regular order
+                // scan converts keys inside such values.
                 self.value(depth + 1, false)?;
             }
             if self.end_or_comma(b"}")? {
                 break;
             }
+        }
+        if self.sorted_objects {
+            object
+                .0
+                .sort_unstable_by(|a, _, b, _| a.as_ref().cmp(b.as_ref()));
         }
         Ok(JsonValue::Object(object))
     }

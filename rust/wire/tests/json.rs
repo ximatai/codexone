@@ -127,18 +127,41 @@ fn accepts_swift_input_encodings_and_produces_utf8() {
         JsonValue::decode_rejecting_duplicates(&utf16le, &["output_format"]),
         Err(JsonError::InvalidJson),
     );
+}
 
-    let atypical_utf32: Vec<_> = r#"{"model":"synthetic","model":"ignored"}"#
-        .chars()
-        .flat_map(|scalar| (scalar as u32).to_le_bytes())
-        .collect();
+#[test]
+fn legacy_utf32le_marker_uses_swift_fallback_order_and_checks_selected_root_keys() {
+    fn legacy_utf32le(text: &str) -> Vec<u8> {
+        let mut encoded = b"\xfe\xff\0\0".to_vec();
+        encoded.extend(
+            text.chars()
+                .flat_map(|scalar| (scalar as u32).to_le_bytes()),
+        );
+        encoded
+    }
+
+    let raw = legacy_utf32le(
+        r#"{"z":{"y":1,"b":2},"model":"synthetic","future":null,"future":[1],"a":{"model":1,"model":2}}"#,
+    );
+    let value = JsonValue::decode_rejecting_duplicates(&raw, &["model"]).unwrap();
     assert_eq!(
-        JsonValue::decode_rejecting_duplicates(
-            &[b"\xfe\xff\0\0".as_slice(), &atypical_utf32].concat(),
-            &["model"],
-        ),
+        value.encode(false),
+        br#"{"a":{"model":1},"future":null,"model":"synthetic","z":{"b":2,"y":1}}"#,
+    );
+
+    let duplicate = legacy_utf32le(r#"{"z":1,"model":"synthetic","mo\u0064el":"ignored"}"#);
+    assert_eq!(
+        JsonValue::decode(&duplicate).unwrap().encode(false),
+        br#"{"model":"synthetic","z":1}"#,
+    );
+    assert_eq!(
+        JsonValue::decode_rejecting_duplicates(&duplicate, &["model"]),
         Err(JsonError::InvalidJson),
     );
+
+    let mut truncated = legacy_utf32le(r#"{"z":1}"#);
+    truncated.pop();
+    assert_eq!(JsonValue::decode(&truncated), Err(JsonError::InvalidJson));
 }
 
 #[test]
