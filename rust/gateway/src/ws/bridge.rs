@@ -347,7 +347,13 @@ async fn exchange(
             let error = match error {
                 BridgeFailure::BeforeSend(error) => match local_error.into_inner().unwrap() {
                     Some(local) => local.into(),
-                    None => connect_error(error, deadline),
+                    None => {
+                        if let websocket::ConnectFailure::Rejected(ref refusal) = error {
+                            attempt.handshake_rejection(refusal);
+                            provider = Some(refusal.clone());
+                        }
+                        connect_error(error, deadline)
+                    }
                 },
                 BridgeFailure::UnprocessedSizeRefusal { .. } => {
                     ProtocolError::new(413, "conversation_too_large").into()

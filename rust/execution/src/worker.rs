@@ -1339,6 +1339,25 @@ impl Execution {
         Ok(())
     }
 
+    /// A provider may explicitly reject the upgrade before the application can send a turn.
+    /// The adapter must establish that the response came from the provider, beyond any proxy.
+    pub fn observe_upgrade_rejection(
+        &mut self,
+        status: i64,
+        evidence: UsageEvidence,
+    ) -> Result<()> {
+        if self.dispatched || self.evidence.is_some() {
+            return Err(Error::Conflict);
+        }
+        if !(400..=499).contains(&status) || evidence.provider_rejected_before_output != Some(true)
+        {
+            return Err(Error::InvalidCommand);
+        }
+        evidence.validate_for(&self.admission)?;
+        self.evidence = Some(evidence);
+        Ok(())
+    }
+
     /// Transfer finalization without awaiting I/O. Failure means the intent remains recoverable.
     pub fn finish(mut self, mut outcome: Option<Outcome>) -> Result<()> {
         if let Some(outcome) = &mut outcome {

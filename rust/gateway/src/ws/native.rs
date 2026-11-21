@@ -413,11 +413,22 @@ impl NativeApplication for Session {
                 } else {
                     ResponseError::from(failure.protocol).failure()
                 };
-                provider = failure;
-                (Some(category), Some(provider.as_ref()), false)
+                provider = Some(failure);
+                (Some(category), provider.as_deref(), false)
             }
-            NativeFinish::BeforeDispatch { protocol, .. } => {
-                (Some(ResponseError::from(protocol).failure()), None, false)
+            NativeFinish::BeforeDispatch {
+                protocol,
+                provider: refusal,
+            } => {
+                if let Some(refusal) = refusal.as_deref() {
+                    attempt.handshake_rejection(refusal);
+                }
+                provider = refusal;
+                (
+                    Some(ResponseError::from(protocol).failure()),
+                    provider.as_deref(),
+                    false,
+                )
             }
             NativeFinish::UnprocessedSizeRefusal => (Some(Failure::InvalidRequest), None, true),
             NativeFinish::Indeterminate {

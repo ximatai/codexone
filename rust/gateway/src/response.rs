@@ -70,7 +70,9 @@ impl From<ProtocolError> for ResponseError {
             "upstream_authentication_rejected" => Failure::AuthenticationRejected,
             "upstream_rate_limited" => Failure::RateLimited,
             "upstream_unavailable" => Failure::UpstreamUnavailable,
-            "upstream_rejected" | "upstream_compact_rejected" => Failure::UpstreamRejected,
+            "upstream_rejected" | "upstream_compact_rejected" | "upstream_upgrade_rejected" => {
+                Failure::UpstreamRejected
+            }
             "conversation_too_large" => Failure::InvalidRequest,
             "account_force_stopped" => Failure::AccountUnavailable,
             "execution_deadline_exceeded"

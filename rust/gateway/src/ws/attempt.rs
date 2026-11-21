@@ -74,6 +74,20 @@ impl Attempt {
         self.evidence.lock().unwrap().first_event.is_some()
     }
 
+    pub fn handshake_rejection(&mut self, provider: &protocol::ProviderFailure) {
+        if let (Some(status), Some(usage)) = (
+            provider.upstream_status,
+            provider.http_rejection_usage(self.images()),
+        ) {
+            let _ = self
+                .lease
+                .get_mut()
+                .as_mut()
+                .expect("active execution")
+                .observe_upgrade_rejection(status, response::evidence(usage));
+        }
+    }
+
     pub async fn bind(&self, document: &JsonValue, unwrapped: bool) -> Result<(), ProtocolError> {
         if let Some(error) = self.evidence.lock().unwrap().error {
             return Err(error);
