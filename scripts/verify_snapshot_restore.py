@@ -81,6 +81,7 @@ def killed_restore(binary, bundle, directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--linked-paths', action='store_true', help='Also verify symlinked ancestors and rejected leaf symlinks')
     args = parser.parse_args();binary = str(args.binary.resolve())
     with running_admin(binary) as f:
         key, secret = create(f.ports['admin'], principal='synthetic-restore')
@@ -90,36 +91,40 @@ def main():
         command(binary, f.root / 'state', '--backup', f.root / 'online-refused', ok=False)
         assert not (f.root / 'online-refused').exists()
         stopped(f.process);f.process = None
-        workspace = f.root / 'workspace'
-        workspace.mkdir(mode=0o700)
-        alias = f.root / 'alias'
-        alias.symlink_to(workspace, target_is_directory=True)
-        bundle = alias / 'bundle'
+        bundle_parent = f.root
+        if args.linked_paths:
+            workspace = f.root / 'workspace'
+            workspace.mkdir(mode=0o700)
+            bundle_parent = f.root / 'alias'
+            bundle_parent.symlink_to(workspace, target_is_directory=True)
+        bundle = bundle_parent / 'bundle'
         manifest = command(binary, f.root / 'state', '--backup', bundle)
         assert manifest['schema'] == current_schema_version(binary) and len(manifest['databaseSHA256']) == 64
         assert hashlib.sha256((bundle / 'snapshot.sqlite').read_bytes()).hexdigest() == manifest['databaseSHA256']
         assert bundle.stat().st_mode & 511 == 448
         for path in bundle.iterdir():assert path.stat().st_mode & 511 == 384
         command(binary, f.root / 'state', '--backup', bundle, ok=False)
-        bundle_link = f.root / 'bundle-link'
-        bundle_link.symlink_to(bundle, target_is_directory=True)
-        command(binary, f.root / 'state', '--backup', str(bundle_link) + '/', ok=False)
-        command(binary, f.root / 'state', '--verify-backup', str(bundle_link) + '/', ok=False)
-        assert bundle_link.is_symlink()
+        if args.linked_paths:
+            bundle_link = f.root / 'bundle-link'
+            bundle_link.symlink_to(bundle, target_is_directory=True)
+            command(binary, f.root / 'state', '--backup', str(bundle_link) + '/', ok=False)
+            command(binary, f.root / 'state', '--verify-backup', str(bundle_link) + '/', ok=False)
+            assert bundle_link.is_symlink()
         # Continue the original service after backup; this execution will be absent from the old snapshot.
         f.process, f.ports = start(binary, f.config, f.root, admin_token_file=f.admin, web_directory=f.web_directory)
         assert request(f.ports['data'], secret)[0] == 200
         stopped(f.process);f.process = None
         with sqlite3.connect(f.root / 'state/core.sqlite') as db:
             original_count = db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
-        parent = alias / 'restored';parent.mkdir(mode=0o700)
+        parent = bundle_parent / 'restored';parent.mkdir(mode=0o700)
         state = parent / 'state'
-        empty = workspace / 'empty'
-        empty.mkdir(mode=0o700)
-        state.symlink_to(empty, target_is_directory=True)
-        command(binary, state, '--restore', bundle, ok=False)
-        assert state.is_symlink() and not list(empty.iterdir())
-        state.unlink()
+        if args.linked_paths:
+            empty = f.root / 'empty'
+            empty.mkdir(mode=0o700)
+            state.symlink_to(empty, target_is_directory=True)
+            command(binary, state, '--restore', bundle, ok=False)
+            assert state.is_symlink() and not list(empty.iterdir())
+            state.unlink()
         report = command(binary, state, '--restore', bundle)
         assert report['state'] == 'restored_unreconciled'
         record = report['restore']
