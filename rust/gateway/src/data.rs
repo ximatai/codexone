@@ -692,6 +692,7 @@ async fn prepare_http_payload(
     deadline: Instant,
 ) -> Result<Payload, ResponseError> {
     let encoded = reply::encode(&document);
+    drop(document);
     if let Some((staging, stage)) = stage {
         let file = tokio::time::timeout_at(deadline, staging.rewrite(encoded, stage))
             .await

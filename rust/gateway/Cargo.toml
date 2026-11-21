@@ -51,6 +51,9 @@ uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 zstd = { version = "0.13", default-features = false }
 
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tungstenite = "0.29"
 base64 = "0.22"

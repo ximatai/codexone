@@ -105,6 +105,8 @@ impl BodyStaging {
         mut bytes: Bytes,
         StageReservation(mut reservation): StageReservation,
     ) -> Result<StagedBody, StageError> {
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        let reclaim_pages = bytes.len() >= 32 * 1024 * 1024;
         let wanted = disk_bytes(bytes.len())?;
         let held = reservation.num_permits();
         if wanted as usize > held {
@@ -123,7 +125,22 @@ impl BodyStaging {
             // A cancelled writer job can outlive the caller's shared memory permit.
             writer = writer.append(Bytes::copy_from_slice(&chunk)).await?;
         }
-        writer.seal().await
+        drop(bytes);
+        let staged = writer.seal().await?;
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        if reclaim_pages {
+            // Large structured JSON leaves free pages inside the glibc arena. Reclaim
+            // them on a staging worker after dropping the decoded and encoded buffers.
+            let _ = self
+                .workers
+                .run((), || {
+                    // SAFETY: glibc supports concurrent calls and takes no pointers here.
+                    unsafe { libc::malloc_trim(0) };
+                    Ok(())
+                })
+                .await;
+        }
+        Ok(staged)
     }
 }
 

@@ -230,6 +230,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libc",
  "percent-encoding",
  "rusqlite",
  "self_cell",
