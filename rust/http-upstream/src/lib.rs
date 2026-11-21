@@ -5,6 +5,7 @@
 mod connect;
 mod deadline;
 mod upload;
+mod upload_diagnostics;
 
 use std::{fmt, future::pending, sync::Arc, time::Duration};
 
@@ -15,6 +16,7 @@ pub use tokio::time::Instant;
 pub use tokio_rustls::rustls::RootCertStore;
 pub use tokio_util::sync::CancellationToken;
 pub use upload::{RequestBody, UPLOAD_CHUNK_BYTES, UploadError};
+pub use upload_diagnostics::CompressionTime;
 
 use deadline::Progress;
 use http::header::{
@@ -89,6 +91,7 @@ pub enum ResponseProgress {
     Explicit,
 }
 
+#[derive(Clone)]
 pub struct ExchangeOptions {
     /// Absolute execution deadline supplied by the caller, including time spent before dispatch.
     pub deadline: Instant,

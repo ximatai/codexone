@@ -8,7 +8,11 @@ use bytes::Bytes;
 use futures_core::Stream;
 use http_body::{Body, Frame, SizeHint};
 
-use crate::{Error, deadline::Progress};
+use crate::{
+    Error,
+    deadline::Progress,
+    upload_diagnostics::{CompressionTime, UploadDiagnostics},
+};
 
 /// Maximum size of one upload frame.
 pub const UPLOAD_CHUNK_BYTES: usize = 64 * 1024;
@@ -20,17 +24,35 @@ pub struct UploadError;
 type Chunks = Pin<Box<dyn Stream<Item = Result<Bytes, UploadError>> + Send>>;
 
 /// Owned upload bytes or a one-shot chunk producer.
-pub struct RequestBody(Source);
+pub struct RequestBody {
+    source: Source,
+    diagnostics: Option<UploadDiagnostics>,
+}
 
 enum Source {
     Bytes(Bytes),
-    Chunks(Chunks),
+    Chunks {
+        stream: Chunks,
+        remaining: Option<u64>,
+    },
+}
+
+impl Source {
+    fn remaining(&self) -> Option<u64> {
+        match self {
+            Self::Bytes(bytes) => Some(bytes.len() as u64),
+            Self::Chunks { remaining, .. } => *remaining,
+        }
+    }
 }
 
 impl RequestBody {
     /// Send bytes with Content-Length, using slices of the same allocation.
     pub fn bytes(bytes: Bytes) -> Self {
-        Self(Source::Bytes(bytes))
+        Self {
+            source: Source::Bytes(bytes),
+            diagnostics: None,
+        }
     }
 
     /// Send an unknown-length body with HTTP/1.1 chunked framing.
@@ -40,7 +62,37 @@ impl RequestBody {
     pub fn chunked(
         chunks: impl Stream<Item = Result<Bytes, UploadError>> + Send + 'static,
     ) -> Self {
-        Self(Source::Chunks(Box::pin(chunks)))
+        Self::streaming(chunks, None)
+    }
+
+    /// Pull one bounded chunk at a time with a declared Content-Length.
+    pub fn sized(
+        chunks: impl Stream<Item = Result<Bytes, UploadError>> + Send + 'static,
+        length: u64,
+    ) -> Self {
+        Self::streaming(chunks, Some(length))
+    }
+
+    fn streaming(
+        chunks: impl Stream<Item = Result<Bytes, UploadError>> + Send + 'static,
+        remaining: Option<u64>,
+    ) -> Self {
+        Self {
+            source: Source::Chunks {
+                stream: Box::pin(chunks),
+                remaining,
+            },
+            diagnostics: None,
+        }
+    }
+
+    pub fn with_diagnostics(
+        mut self,
+        plaintext: usize,
+        compression: Option<CompressionTime>,
+    ) -> Self {
+        self.diagnostics = UploadDiagnostics::new(plaintext, compression);
+        self
     }
 }
 
@@ -57,11 +109,11 @@ pub(crate) struct WireBody {
 }
 
 #[derive(Clone)]
-pub(crate) struct UploadOwner(Arc<Mutex<Option<Source>>>);
+pub(crate) struct UploadOwner(Arc<Mutex<Option<RequestBody>>>);
 
 impl UploadOwner {
     pub(crate) fn new(body: RequestBody) -> Self {
-        Self(Arc::new(Mutex::new(Some(body.0))))
+        Self(Arc::new(Mutex::new(Some(body))))
     }
 
     pub(crate) fn wire_body(&self, progress: Progress) -> WireBody {
@@ -96,18 +148,35 @@ impl Body for WireBody {
             // the error body. EOF here could turn that response into an HTTP write error.
             return Poll::Pending;
         };
-        let (chunk, finished) = match body {
-            Source::Bytes(bytes) => {
-                let chunk = bytes.split_to(bytes.len().min(UPLOAD_CHUNK_BYTES));
-                // The final fixed-length frame completes the upload without a separate EOF pull.
-                (Some(Ok(chunk)), bytes.is_empty())
-            }
-            Source::Chunks(chunks) => {
-                let chunk = ready!(chunks.as_mut().poll_next(cx));
-                let finished = chunk.is_none();
-                (chunk, finished)
+        let chunk = match &mut body.source {
+            Source::Bytes(bytes) if bytes.is_empty() => None,
+            Source::Bytes(bytes) => Some(Ok(bytes.split_to(bytes.len().min(UPLOAD_CHUNK_BYTES)))),
+            Source::Chunks { stream, remaining } => {
+                let chunk = ready!(stream.as_mut().poll_next(cx));
+                if let Some(left) = remaining {
+                    match &chunk {
+                        Some(Ok(bytes)) if bytes.len() as u64 <= *left => {
+                            *left -= bytes.len() as u64
+                        }
+                        None if *left == 0 => {}
+                        _ => return Poll::Ready(Some(Err(Error::Upload))),
+                    }
+                }
+                chunk
             }
         };
+        let chunk = match chunk {
+            Some(Ok(bytes)) if !bytes.is_empty() && bytes.len() <= UPLOAD_CHUNK_BYTES => {
+                Some(bytes)
+            }
+            Some(_) => return Poll::Ready(Some(Err(Error::Upload))),
+            None => None,
+        };
+        // Hyper does not repoll a fixed-length body after the final declared byte.
+        let finished = chunk.is_none() || body.source.remaining() == Some(0);
+        if let Some(event) = &mut body.diagnostics {
+            event.pulled(chunk.as_ref().map_or(0, Bytes::len), finished);
+        }
         let completed = if finished { source.take() } else { None };
         drop(source);
         drop(completed);
@@ -117,19 +186,20 @@ impl Body for WireBody {
         } else {
             self.progress.upload_progress();
         }
-        Poll::Ready(chunk.map(|result| match result {
-            Ok(bytes) if !bytes.is_empty() && bytes.len() <= UPLOAD_CHUNK_BYTES => {
-                Ok(Frame::data(bytes))
-            }
-            _ => Err(Error::Upload),
-        }))
+        Poll::Ready(chunk.map(|bytes| Ok(Frame::data(bytes))))
     }
 
     fn is_end_stream(&self) -> bool {
         if self.finished {
             return true;
         }
-        if matches!(&*self.source.0.lock().unwrap(), Some(Source::Bytes(bytes)) if bytes.is_empty())
+        if self
+            .source
+            .0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|body| body.source.remaining() == Some(0))
         {
             self.progress.uploaded();
             return true;
@@ -138,9 +208,16 @@ impl Body for WireBody {
     }
 
     fn size_hint(&self) -> SizeHint {
-        match &*self.source.0.lock().unwrap() {
-            Some(Source::Bytes(bytes)) => SizeHint::with_exact(bytes.len() as u64),
-            _ => SizeHint::default(),
+        match self
+            .source
+            .0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|body| body.source.remaining())
+        {
+            Some(remaining) => SizeHint::with_exact(remaining),
+            None => SizeHint::default(),
         }
     }
 }
