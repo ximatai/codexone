@@ -29,7 +29,10 @@ class VerifyWorkflowTests(unittest.TestCase):
         mutations = [
             ('needs: [changes, backend-rust-build]', 'needs: changes'),
             ("CODEXONE_WEB_STUBS_ONLY: '0'", "CODEXONE_WEB_STUBS_ONLY: '1'"),
-            ('npm run test:e2e -- admin-live-real --workers=1', 'true'),
+            ('npm run test:e2e -- admin-live-real --workers=1 --grep @smoke', 'true'),
+            ('npm run test:e2e -- admin-live-real --workers=1 --grep @visual', 'true'),
+            ("if: needs.changes.outputs.admin_live_visual == 'true'", "if: always()"),
+            ('admin_live_visual: ${{ steps.filter.outputs.admin_live_visual }}', ''),
             ('CODEXONE_WEB_TEST_BINARY: ../.build/live/codexone', 'CODEXONE_WEB_TEST_BINARY: ../.build/debug/codexone'),
             ('run: ../scripts/verify.sh --web', 'run: npm run build'),
             ('backend-rust-scripts, frontend-live, devcontainer]', 'backend-rust-scripts, devcontainer]'),
@@ -64,7 +67,9 @@ class VerifyWorkflowTests(unittest.TestCase):
         code = textwrap.dedent(script[1])
         jobs = set(workflow) - {'verify'}
         selections = [(), ('rust',), ('frontend',), ('rust', 'frontend'),
-                      ('devcontainer',), ('rust', 'storage'), ('rust', 'storage', 'frontend', 'devcontainer')]
+                      ('devcontainer',), ('rust', 'storage'), ('rust', 'admin_live_visual'),
+                      ('frontend', 'admin_live_visual'),
+                      ('rust', 'storage', 'frontend', 'admin_live_visual', 'devcontainer')]
         for selected in selections:
             required = {'changes', 'docs'}
             if 'rust' in selected:
@@ -75,11 +80,14 @@ class VerifyWorkflowTests(unittest.TestCase):
                 required.add('devcontainer')
             needs = {job: {'result': 'success' if job in required else 'skipped'} for job in jobs}
             needs['changes']['outputs'] = {name: str(name in selected).lower()
-                                          for name in ('rust', 'storage', 'frontend', 'devcontainer')}
+                                          for name in ('rust', 'storage', 'frontend', 'admin_live_visual', 'devcontainer')}
             def run(payload):
                 return subprocess.run([sys.executable, '-c', code], capture_output=True,
                                       env={**os.environ, 'RESULTS': json.dumps(payload)}).returncode
             self.assertEqual(run(needs), 0)
+            if not selected:
+                outputs = {**needs['changes']['outputs'], 'admin_live_visual': 'true'}
+                self.assertNotEqual(run({**needs, 'changes': {'result': 'success', 'outputs': outputs}}), 0)
             for job in required:
                 with self.subTest(selected=selected, missing=job):
                     self.assertNotEqual(run({name: value for name, value in needs.items() if name != job}), 0)
@@ -101,18 +109,32 @@ class ChangedPathsTests(unittest.TestCase):
             (['rust/gateway/Cargo.lock', 'rust/wire/src/With\nNewline.rs'], {'rust'}),
             (['scripts/verify_rust.sh'], {'rust'}),
             (['scripts/verify.sh'], {'rust', 'frontend'}),
-            (['.github/workflows/verify.yml'], {'rust', 'storage', 'frontend', 'devcontainer'}),
+            (['.github/workflows/verify.yml'], {'rust', 'storage', 'frontend', 'admin_live_visual', 'devcontainer'}),
+            (['scripts/ci_changes.sh'], {'rust', 'storage', 'frontend', 'admin_live_visual', 'devcontainer'}),
             (['.github/workflows/release.yml'], {'rust', 'frontend'}),
             (['.github/dependabot.yml'], set()),
             (['deploy/Dockerfile'], {'rust', 'frontend'}),
             (['.dockerignore'], {'rust', 'frontend'}),
             (['scripts/verify_websocket.py'], {'rust'}),
-            (['scripts/verify_admin_live.py'], {'rust'}),
+            (['scripts/verify_admin_live.py'], {'rust', 'admin_live_visual'}),
             (['scripts/rust_compat/execution_recovery.py'], {'rust'}),
-            (['fixtures/system-status.json'], {'rust', 'frontend'}),
+            (['fixtures/system-status.json'], {'rust', 'frontend', 'admin_live_visual'}),
             (['fixtures/provider-text-contract.json', 'fixtures/image-input/synthetic.jpg'], {'rust'}),
             (['Sources/CodexOne/CodexOneMain.swift', 'Package.swift'], set()),
-            (['web/src/App.tsx'], {'frontend'}),
+            (['web/src/App.tsx'], {'frontend', 'admin_live_visual'}),
+            (['web/src/app/Workspace.module.css'], {'frontend', 'admin_live_visual'}),
+            (['web/src/features/system-status/useOverviewLive.ts'], {'frontend', 'admin_live_visual'}),
+            (['web/src/features/usage/usage.module.css'], {'frontend', 'admin_live_visual'}),
+            (['web/src/features/account-management/QuotaWindowBar.tsx'], {'frontend', 'admin_live_visual'}),
+            (['web/src/shared/ui/ContinuousValue.tsx'], {'frontend', 'admin_live_visual'}),
+            (['web/src/features/model-directory/ModelDirectory.tsx'], {'frontend'}),
+            (['web/tests/e2e/token-units.spec.ts'], {'frontend'}),
+            (['web/tests/e2e/admin-live-real.spec.ts'], {'frontend', 'admin_live_visual'}),
+            (['web/tests/e2e/layout.ts'], {'frontend', 'admin_live_visual'}),
+            (['web/package-lock.json'], {'frontend', 'admin_live_visual'}),
+            (['rust/gateway/src/overview_live.rs'], {'rust', 'admin_live_visual'}),
+            (['rust/admin/src/assets.rs'], {'rust', 'admin_live_visual'}),
+            (['rust/storage/src/migration.rs', 'web/src/styles.css'], {'rust', 'storage', 'frontend', 'admin_live_visual'}),
             (['rust/storage/src/migration.rs'], {'rust', 'storage'}),
             (['rust/maintenance/src/snapshot.rs'], {'rust', 'storage'}),
             (['.devcontainer/Dockerfile'], {'devcontainer'}),
@@ -125,6 +147,11 @@ class ChangedPathsTests(unittest.TestCase):
                                         input='\0'.join(paths) + '\0', capture_output=True, text=True)
                 self.assertEqual({line.removesuffix('=true') for line in result.stdout.splitlines()
                                   if line.endswith('=true')}, expected)
+
+    def test_full_selection_includes_real_browser_visuals(self):
+        selection = subprocess.check_output(['bash', 'scripts/ci_changes.sh', '--all'], cwd=ROOT, text=True)
+        self.assertEqual(dict(line.split('=') for line in selection.splitlines()), dict.fromkeys(
+            ('rust', 'storage', 'frontend', 'admin_live_visual', 'devcontainer'), 'true'))
 
     def test_keeps_migrated_Rust_checks_in_all_shard_modes(self):
         replacements = {

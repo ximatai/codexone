@@ -22,6 +22,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       storage: ${{ steps.filter.outputs.storage }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      admin_live_visual: ${{ steps.filter.outputs.admin_live_visual }}
       devcontainer: ${{ steps.filter.outputs.devcontainer }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,8 +203,11 @@ jobs:
       - name: Build the SPA for Rust-only changes
         if: needs.changes.outputs.frontend != 'true'
         run: npm run build
-      - name: Verify real gateway and browser together
-        run: npm run test:e2e -- admin-live-real --workers=1
+      - name: Verify login and updates through the real gateway
+        run: npm run test:e2e -- admin-live-real --workers=1 --grep @smoke
+      - name: Verify sustained live and fallback rendering
+        if: needs.changes.outputs.admin_live_visual == 'true'
+        run: npm run test:e2e -- admin-live-real --workers=1 --grep @visual
       - name: Upload real browser failure evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -245,7 +249,7 @@ jobs:
           import json, os
           needs = json.loads(os.environ['RESULTS'])
           selected = needs['changes'].get('outputs', {})
-          for name in ('rust', 'storage', 'frontend', 'devcontainer'):
+          for name in ('rust', 'storage', 'frontend', 'admin_live_visual', 'devcontainer'):
               if selected.get(name) not in ('true', 'false'):
                   raise SystemExit(f'Missing or invalid selection for {name}')
           required = {'changes', 'docs'}
@@ -253,6 +257,8 @@ jobs:
           frontend = selected['frontend'] == 'true'
           if selected['storage'] == 'true' and not rust:
               raise SystemExit('Storage validation requires Rust checks')
+          if selected['admin_live_visual'] == 'true' and not (rust or frontend):
+              raise SystemExit('Live visual validation requires the browser job')
           if rust:
               required.update({'backend-rust', 'backend-rust-scripts'})
           if rust or frontend:
