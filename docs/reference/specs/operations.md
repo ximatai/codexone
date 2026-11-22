@@ -17,6 +17,8 @@
 
 启动扫描所有旧 boot 的 held/dispatch_intent/unfinalized：确定未 dispatch 的可释放，其余默认 pending，重建其 exposure 占用；同时处理未完成 refresh_intent 为 auth_uncertain，完成后才发布路由快照。不能因 pending 标记未写成功而丢掉。正常进程崩溃恢复与主机掉电/存储故障分开验收；kill -9 仅证明前者。FULL 不允许作为未测掉电恢复的证据。
 
+每次打开核心库启动服务都执行刷新恢复，包括未配置主密钥和账号池的仅存储模式。恢复将仍处于 `refreshing` 的账号修订加一，保留原凭证密文、凭证版本和 intent，并在同一事务写入一条 `refresh_restart_uncertain` 审计。再次启动时已处于 `auth_uncertain` 的账号跳过此恢复。
+
 实例锁由服务、migration、restore 和密钥维护命令共同使用；离线迁移无法取得锁立即非零退出，不能旁路在线服务。命令先校验二进制与 schema 兼容范围，备份成功后迁移；失败回滚事务或保留 maintenance 状态、输出明确修复指引，数据面不得 ready。服务可在启动时执行明确放行的兼容迁移；其余迁移须离线执行。
 
 恢复旧快照总进入 `maintenance -> restored_unreconciled -> ready`：恢复工具记录快照时间、来源和恢复时刻，展示缺失区间；扫描快照内活动项，且明确快照之后的已执行项可能完全缺失。管理员选择并审计恢复后的额度基线（默认冻结受影响窗口/重发新窗口额度，不自动复活旧余额）后才启用准入。在线数据库完整性正确不代表快照缺口已核对。
