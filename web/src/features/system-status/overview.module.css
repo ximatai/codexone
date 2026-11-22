@@ -351,6 +351,11 @@
   min-block-size: 12rem;
 }
 
+.keySummarySnapshot {
+  flex: 1 0 min(100%, 22em);
+  text-align: end;
+}
+
 .quotaTrendMotion {
   display: grid;
   grid-template-rows: 0fr;

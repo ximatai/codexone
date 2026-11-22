@@ -23,7 +23,13 @@ export function UsageChartCard({
       }
       aria-labelledby={heading}
     >
-      <Group align="baseline" justify="space-between" gap="xs" mb="sm">
+      <Group
+        align="baseline"
+        justify="space-between"
+        gap="xs"
+        mb="sm"
+        className={styles.chartHeader}
+      >
         <Title order={3} size="h5" id={heading}>
           {title}
         </Title>
