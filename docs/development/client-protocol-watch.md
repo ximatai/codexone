@@ -19,6 +19,10 @@
 - 官方 main 的客户端按 1 MiB 分帧发送大消息，可读取握手响应中的 `x-codex-websocket-max-message-bytes` 并在超限时选择 HTTP。进入稳定版后，先核对客户端编码字节数与网关重编码边界，再决定握手声明值。用固定客户端验证发送前回退及响应已经开始时的处理。 [固定源码](https://github.com/openai/codex/blob/1f1f6ebb6c156d5ab1d4745155f340b897b24f02/codex-rs/codex-api/src/endpoint/responses_websocket.rs#L1113)
 - GIF 工具参数受客户端门控。使用启用 GIF 的客户端分别验收原生生成和参考图编辑，检查实际格式。客户端附件存储可能返回文件引用，出现兼容问题时再核对文件归属和访问范围。 [GIF 请求源码](https://github.com/openai/codex/blob/1f1f6ebb6c156d5ab1d4745155f340b897b24f02/codex-rs/codex-api/src/images.rs) · [稳定版图片工具](https://github.com/openai/codex/blob/ce21072c90d32c40af7a55b60b2fb35c84a43a6a/codex-rs/ext/image-generation/src/tool.rs#L266)
 
+## CLI 0.171.0 验收
+
+2026-11-22 在 macOS arm64 用固定 CLI 和回环合成上游验收了三条路径。流式压缩后，CLI 在同一原生 WebSocket 切换窗口，首轮携带完整压缩项并省略旧响应 ID，下一次工具结果增量引用新窗口的响应。启用 `interrupt_on_cancel` 的 Lite 轮次，显式取消在确认帧和终态的两种顺序下均成功结束，下一轮在新上游连接完成。启用直接工具发现的模型目录配置后，CLI 通过 HTTP 和原生 WebSocket 发现并调用合成本地 MCP 工具。测试核对上游派发次数和持久结算。实际提供者和 Desktop 行为仍需分别验收。
+
 ## 自动化边界
 
 当前没有自动定时跟踪或消耗真实额度的客户端金丝雀。协议兼容受客户端与内部端点变化影响，发布时列明实际验证的版本和组合，不承诺修复时限。未知协议类别、数量与限速的调整须更新规范。

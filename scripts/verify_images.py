@@ -30,6 +30,11 @@ OUTPUTS = {'png': PNG,
     'svg': base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>').decode(),
     'synthetic-future': base64.b64encode(b'synthetic-future-output-container').decode()}
 GIF_ANIMATION = {'frame_count': 2, 'frame_duration_ms': 200}
+SECOND_IMAGE = base64.b64encode(b'synthetic-second-image').decode()
+IMAGE_METADATA = [
+    {'generation_id': 'synthetic-first', 'image_metadata': {'ordinal': 1}},
+    {'generation_id': 'synthetic-second', 'image_metadata': {'ordinal': 2}},
+]
 
 
 def native_body(prompt, output_format='png'):
@@ -69,7 +74,10 @@ def native_stream(operation, prompt='synthetic', output_format='png'):
         first = dict(final)
         first['image_index'] = 0
         if prompt == 'stream-multiple-late': first.pop('usage')
-        second = {**final, 'image_index':1, 'b64_json':base64.b64encode(b'synthetic-second-image').decode()}
+        second = {**final, 'image_index':1, 'b64_json':SECOND_IMAGE}
+        if prompt == 'stream-multiple':
+            first.update(IMAGE_METADATA[0])
+            second.update(IMAGE_METADATA[1])
         if prompt == 'stream-multiple-repeated': second['b64_json'] = PNG
         if prompt != 'stream-multiple-repeated':
             second['usage'] = {'input_tokens':4, 'output_tokens':7, 'input_tokens_details':{'text_tokens':2, 'image_tokens':2}}
@@ -421,6 +429,19 @@ def main():
                         with sqlite3.connect(db) as connection:
                             rate = connection.execute('SELECT output_rate FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()[0]
                         assert (rate is not None) == should_record
+                    before = upstream.calls
+                    status, body, _ = request({'prompt': 'stream-multiple', 'stream': False, 'n': 2})
+                    assert status == 200 and upstream.calls == before + 1
+                    result = json.loads(body)
+                    assert result['data'] == [
+                        {'b64_json': image, **metadata}
+                        for image, metadata in zip((PNG, SECOND_IMAGE), IMAGE_METADATA)
+                    ]
+                    assert all(name not in result for name in IMAGE_METADATA[0])
+                    state, usage, outcome = ledger()
+                    assert state == 'settled' and outcome['kind'] == 'succeeded' and usage['images'] == 2
+                    assert (usage['imageInputTokens'], usage['imageOutputTokens']) == (4, 7)
+                    assert usage['estimatedMicros'] == 29
                     if args.smoke:
                         verify_native('/v1', 'generations')
                         verify_native('/backend-api/codex', 'edits')
@@ -592,6 +613,8 @@ def main():
                     # SSE completions are images in arrival order; usage is request-level cumulative.
                     for streaming in (False, True):
                         for fault in ('stream-multiple', 'stream-multiple-repeated', 'stream-multiple-late'):
+                            if not streaming and fault == 'stream-multiple':
+                                continue  # Also covered by the smoke path above.
                             before = upstream.calls
                             status, body, _ = request({'prompt':fault, 'stream':streaming, 'n':2})
                             assert status == 200 and upstream.calls == before + 1, (fault,status,body[:200])
@@ -599,7 +622,7 @@ def main():
                                 events = [json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: {')]
                                 images = [e['b64_json'] for e in events if e['type'].endswith('.completed')]
                             else: images = [e['b64_json'] for e in json.loads(body)['data']]
-                            assert images == [PNG, PNG if fault.endswith('repeated') else base64.b64encode(b'synthetic-second-image').decode()], images
+                            assert images == [PNG, PNG if fault.endswith('repeated') else SECOND_IMAGE], images
                             state, usage, outcome = ledger()
                             assert state == 'settled' and outcome['kind'] == 'succeeded' and usage['images'] == 2
                             assert usage['imageInputTokens'] == (2 if fault.endswith('repeated') else 4)
