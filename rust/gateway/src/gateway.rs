@@ -205,7 +205,7 @@ async fn run_configured(
     let mut model_efforts = Default::default();
     let static_identity =
         matches!(&config.source, Some(Source::SingleIdentity(identity)) if !identity.managed_keys);
-    let (mut options, mut data, pool_config) = match config.source.take() {
+    let (options, mut data, pool_config) = match config.source.take() {
         None => (Options::new("storage-only"), None, None),
         Some(Source::SingleIdentity(identity)) => {
             let token = identity.read_upstream_token().map_err(|_| Service)?;
@@ -248,10 +248,6 @@ async fn run_configured(
         }
         Some(Source::AccountPool(pool)) => (Options::for_account_pool(), None, Some(pool)),
     };
-    if config.master_keys.is_some() {
-        options = options.with_governance_recovery(managed::recover);
-    }
-
     // Neither listener is announced until both sockets and startup recovery are ready.
     let data_listener = Listeners::bind("data", runtime.data_port, runtime.listen_address)
         .await
@@ -272,7 +268,9 @@ async fn run_configured(
                 .map(|root| (root, database.backup_source()));
             let service = ExecutionService::open_database(
                 database,
-                options.with_business_day_offset_hours(offset),
+                options
+                    .with_business_day_offset_hours(offset)
+                    .with_governance_recovery(managed::recover),
             )
             .await
             .map_err(|_| Service)?;

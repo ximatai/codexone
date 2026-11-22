@@ -34,18 +34,103 @@ fn child() {
     let Ok(port) = std::env::var("CODEXONE_MANAGED_TEST_PORT") else {
         return;
     };
-    let port: NonZeroU16 = port.parse().unwrap();
+    let subscription = NonZeroU16::new(port.parse().unwrap())
+        .map(|port| SubscriptionTarget::synthetic_loopback(port, port));
     let config =
         Configuration::load(RuntimeConfiguration::from_process().unwrap(), unix_time()).unwrap();
     let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap()
-        .block_on(gateway::run_with_target(
-            config,
-            Some(SubscriptionTarget::synthetic_loopback(port, port)),
-        ));
+        .block_on(gateway::run_with_target(config, subscription));
     assert!(result.is_ok());
+}
+
+#[test]
+fn storage_only_recovers_refresh_intent_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = root.join("state");
+    fs::create_dir(&state).unwrap();
+    let path = state.join("core.sqlite");
+    let cipher = AccountCredentialCipher::from_hex(&"66".repeat(32), &[]).unwrap();
+    private(&path, "");
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(include_str!("../../execution/tests/swift_v19.sql"))
+        .unwrap();
+    let database = Database::open_existing(&path).unwrap();
+    let records = |db: &Connection| {
+        db.prepare(
+            "SELECT id,revision,credential_version,mode,authorization,sealed_credential,refresh_intent
+             FROM accounts ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                Sha256::digest(row.get::<_, String>(5)?),
+                row.get::<_, Option<String>>(6)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+    };
+    for (id, auth, intent) in [
+        ("pending", "refreshing", Some("synthetic-pending")),
+        ("ready", "ready", None),
+        ("settled", "auth_uncertain", Some("synthetic-settled")),
+    ] {
+        seed_account(
+            &database,
+            &cipher,
+            1,
+            id,
+            ("enabled", auth, intent),
+            unix_time(),
+        );
+    }
+    let mut expected = records(database.connection());
+    assert_eq!(expected[0].0, "pending");
+    expected[0].1 += 1;
+    expected[0].4 = "auth_uncertain".into();
+    drop(database);
+    drop(cipher);
+
+    for _ in 0..2 {
+        let (mut process, data, _) = launch_with_stderr(root, None, Stdio::inherit());
+        assert_eq!(request(data, "GET", "/health/ready", None, None).0, 503);
+        let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        assert_eq!(records(&db), expected);
+        let events = db
+            .prepare("SELECT account_id,revision,action FROM account_events")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            events,
+            [(
+                "pending".into(),
+                expected[0].1,
+                "refresh_restart_uncertain".into()
+            )]
+        );
+        drop(db);
+        process.terminate();
+    }
 }
 
 #[test]
@@ -532,23 +617,29 @@ impl Drop for Gateway {
 }
 
 fn launch(root: &Path, upstream: u16) -> (Gateway, u16, u16) {
-    launch_with_stderr(root, upstream, Stdio::inherit())
+    launch_with_stderr(root, Some(upstream), Stdio::inherit())
 }
 
-fn launch_with_stderr(root: &Path, upstream: u16, stderr: Stdio) -> (Gateway, u16, u16) {
+fn launch_with_stderr(root: &Path, upstream: Option<u16>, stderr: Stdio) -> (Gateway, u16, u16) {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args(["--exact", "managed_process::child", "--nocapture"])
         .env_clear()
-        .env("CODEXONE_MANAGED_TEST_PORT", upstream.to_string())
-        .env("CODEXONE_ACCOUNT_POOL_CONFIG", root.join("pool.json"))
-        .env("CODEXONE_ACCOUNT_MASTER_KEY_FILE", root.join("master"))
-        .env("CODEXONE_ADMIN_TOKEN_FILE", root.join("admin"))
+        .env(
+            "CODEXONE_MANAGED_TEST_PORT",
+            upstream.unwrap_or(0).to_string(),
+        )
         .env("CODEXONE_DATA_DIRECTORY", root.join("state"))
         .env("CODEXONE_DATA_PORT", "0")
         .env("CODEXONE_ADMIN_PORT", "0")
         .stdout(Stdio::piped())
         .stderr(stderr);
+    if upstream.is_some() {
+        command
+            .env("CODEXONE_ACCOUNT_POOL_CONFIG", root.join("pool.json"))
+            .env("CODEXONE_ACCOUNT_MASTER_KEY_FILE", root.join("master"))
+            .env("CODEXONE_ADMIN_TOKEN_FILE", root.join("admin"));
+    }
     if std::env::var_os("CODEXONE_TEST_MANAGED_SPA").is_some() {
         let bundle = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../web/dist")
@@ -1903,7 +1994,7 @@ fn directory_rates_and_control_health_survive_normal_entry_points() {
 
     let stderr = tempfile::NamedTempFile::new_in(root).unwrap();
     let (mut gateway, data, admin) =
-        launch_with_stderr(root, port, stderr.reopen().unwrap().into());
+        launch_with_stderr(root, Some(port), stderr.reopen().unwrap().into());
     let (status, stored) = request(admin, "GET", "/api/models", Some(ADMIN), None);
     assert_eq!(status, 200, "{stored}");
     assert_eq!(stored["revision"], 3);
