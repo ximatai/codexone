@@ -332,10 +332,11 @@ test("a new server epoch replaces the in-flight snapshot", async ({
   await expect(trend.locator("line.recharts-reference-line-line")).toHaveCount(
     2,
   );
-  await trend
-    .locator("circle.recharts-dot")
-    .last()
-    .hover({ position: { x: 3, y: 2 } });
+  // Recharts adds its active indicator to the same dot class when the pointer moves.
+  const latestDot = trend.locator('circle.recharts-dot[r="2"]').last();
+  await latestDot.scrollIntoViewIfNeeded();
+  const dot = (await latestDot.boundingBox())!;
+  await page.mouse.move(dot.x + dot.width - 1, dot.y + dot.height / 2);
   await expect(page.getByRole("tooltip")).toContainText(
     "43 Token/s · 5 笔样本",
   );
