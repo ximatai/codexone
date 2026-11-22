@@ -22,10 +22,10 @@ CodexOne 是用 Rust 编写的个人自托管网关。把自己的 ChatGPT/Codex
 
 ## 安装
 
-正式镜像面向 **Linux amd64**。服务器需要 Docker Engine、Compose v2、Python 3 和本地磁盘。使用发布页中同一版本的源码包和镜像，源码包提供安装脚本，无需编译 Rust。以下以正式版 v1.26.55 为例。
+正式镜像面向 **Linux amd64**。服务器需要 Docker Engine、Compose v2、Python 3 和本地磁盘。使用发布页中同一版本的源码包和镜像，源码包提供安装脚本，无需编译 Rust。以下以正式版 v1.26.57 为例。
 
 ```sh
-VERSION=1.26.55
+VERSION=1.26.57
 RELEASE="https://github.com/ximatai/codexone/releases/download/v$VERSION"
 curl -fLO "$RELEASE/codexone-$VERSION-source.tar.gz"
 curl -fLO "$RELEASE/SHA256SUMS"
