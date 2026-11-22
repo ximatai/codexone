@@ -22,10 +22,10 @@ On the Access Keys page, you can review permissions, rotate a key, or disable on
 
 ## Install
 
-The release image runs on **Linux amd64**. The server needs Docker Engine, Compose v2, Python 3, and local disk storage. Use the source archive and image from the same release. The archive contains the installer and the image contains the compiled gateway. The example below uses v1.26.55.
+The release image runs on **Linux amd64**. The server needs Docker Engine, Compose v2, Python 3, and local disk storage. Use the source archive and image from the same release. The archive contains the installer and the image contains the compiled gateway. The example below uses v1.26.57.
 
 ```sh
-VERSION=1.26.55
+VERSION=1.26.57
 RELEASE="https://github.com/ximatai/codexone/releases/download/v$VERSION"
 curl -fLO "$RELEASE/codexone-$VERSION-source.tar.gz"
 curl -fLO "$RELEASE/SHA256SUMS"

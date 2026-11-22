@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v1.26.55](https://github.com/ximatai/codexone/releases/tag/v1.26.55)**（2026-11-21），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+当前稳定版本为 **[v1.26.57](https://github.com/ximatai/codexone/releases/tag/v1.26.57)**（2026-11-22），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+
+v1.26.57 修复了原生 Images 从扁平 SSE 聚合为非流式 JSON 时的逐图元数据归属。每张图现在携带自己的生成 ID 和图片元数据。见[发布说明](CHANGELOG.md)。
 
 v1.26.55 是首个正式发布的 Rust 后端版本，支持从 v19 数据卷升级，补齐了订阅池续接状态归属与 WebSocket 迟到输出检查。上一个 Swift 正式版保存在 [Swift 归档分支](https://github.com/ximatai/codexone/tree/archive/swift-v0.26.53)。
 
