@@ -1,3 +1,5 @@
+import type { WebSocketRoute } from "@playwright/test";
+import { initialSections } from "./overview-snapshot";
 import { expectNoHorizontalOverflow } from "./layout";
 import { mkdir } from "node:fs/promises";
 import { expect, test } from "./fixtures";
@@ -7,17 +9,21 @@ import { reportFixture } from "../../src/features/usage/usage.test-data";
 // Documentation assets contain only generated fixtures; no live API or login.
 test("render synthetic documentation screenshots", async ({ page }) => {
   const state = await reviewFixture(page);
-  const now = Date.parse("2026-01-15T12:00:00Z") / 1000;
+  const now = Date.parse("2026-11-20T12:00:00Z") / 1000;
   await page.clock.setFixedTime(new Date(now * 1000));
   state.alerts = 0;
   state.keys.splice(4);
   state.keys.forEach((key, i) => {
-    key.principal = ["desktop", "laptop", "terminal", "automation"][i];
+    key.principal = ["workstation", "notebook", "codex-cli", "nightly-jobs"][i];
     key.expiresAtUnixSeconds = null;
     key.createdAtUnixSeconds = now - 86400;
     key.limits.tokens = 1000000;
   });
   state.accounts.splice(1);
+  state.keys.forEach((key) => {
+    key.enabled = true;
+  });
+  state.accounts[0].observability.quota.limits[0].primary.usedPercent = 36;
   state.accounts[0].displayName = "合成订阅账号";
   state.accounts[0].observability.quota.limits[0].primary.resetsAtUnixSeconds =
     now + 7200;
@@ -113,15 +119,47 @@ test("render synthetic documentation screenshots", async ({ page }) => {
           inFlight: 0,
           failed: 0,
           pending: 0,
-          tokens: String([4800, 3600, 3600, 2400][i]),
+          tokens: String([6400, 4000, 2800, 1200][i]),
           tokenUsageIncomplete: false,
-          estimatedMicros: "10500",
+          inputTokens: String([5400, 3400, 2200, 1000][i]),
+          cachedTokens: String([3600, 2400, 1400, 600][i]),
+          cacheUsageIncomplete: false,
+          estimatedMicros: ["18000", "12000", "8000", "4000"][i],
+          firstUsedTodayAtUnixSeconds: now - (i + 1) * 3600,
+          lastUsedTodayAtUnixSeconds: now - i * 300,
+          images: "0",
+          priceUsageIncomplete: false,
           lastUsedAtUnixSeconds: now - i * 300,
         })),
       },
     }),
   );
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.route("**/api/runtime/storage", (route) =>
+    route.fulfill({
+      json: {
+        pressure: "normal",
+        admissionAllowed: true,
+        optionalWorkAllowed: true,
+        availableBytes: 36 * 1024 ** 3,
+        volumeTotalBytes: 64 * 1024 ** 3,
+        resources: Array.from({ length: 121 }, (_, i) => ({
+          unixSeconds: now - (120 - i) * 30,
+          hostCPUPercent: 14 + Math.round(6 * Math.sin(i / 8)),
+          processResidentBytes:
+            (26 + Math.round(2 * Math.sin(i / 9))) * 1024 ** 2,
+          hostAvailableBytes: 3 * 1024 ** 3,
+          hostTotalBytes: 4 * 1024 ** 3,
+          diskAvailableBytes: 36 * 1024 ** 3,
+        })),
+      },
+    }),
+  );
+  let socket: WebSocketRoute | undefined;
+  await page.routeWebSocket("**/api/overview/live", (route) => {
+    socket = route;
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1440, height: 1200 });
   await mkdir("../docs/assets", { recursive: true });
   await page.goto("/");
   await expect(page.getByText("合成订阅账号", { exact: true })).toBeVisible();
@@ -132,19 +170,51 @@ test("render synthetic documentation screenshots", async ({ page }) => {
   await expect(
     page
       .getByRole("region", { name: "今日 Key 请求汇总" })
-      .getByText("desktop", { exact: true }),
+      .getByText("workstation", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("region", { name: "协议观测" })).toBeVisible();
+  await expect.poll(() => Boolean(socket)).toBe(true);
+  const sections = await initialSections(page, now);
+  sections.inFlight.data = {
+    rows: [],
+    clients: [],
+    recentlyFinished: [],
+    overflow: 0,
+    recentRequestOutputRateMedian: 42,
+    requestOutputRateByHour: {
+      endUnixSeconds: now,
+      offsetMinutes: 0,
+      points: Object.fromEntries(
+        Array.from({ length: 26 }, (_, i) => [
+          now - (25 - i) * 3600,
+          { median: 35 + Math.round(7 * Math.cos(i / 4)), count: 1 + (i % 3) },
+        ]),
+      ),
+    },
+  };
+  socket!.send(
+    JSON.stringify({
+      protocol: 1,
+      epoch: "docs",
+      sequence: 1,
+      kind: "snapshot",
+      sections,
+    }),
+  );
+  await expect(
+    page.getByRole("img", { name: /^Token 输出速率近 7 天/ }),
+  ).toBeVisible();
   await page.screenshot({
     path: "../docs/assets/overview.png",
-    fullPage: true,
+    animations: "disabled",
   });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("link", { name: "访问密钥", exact: false }).click();
   await expect(
     page.getByRole("heading", { name: "访问密钥", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("desktop", { exact: true }).first(),
+    page.getByText("workstation", { exact: true }).first(),
   ).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expectNoHorizontalOverflow(page);
