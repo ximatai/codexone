@@ -270,6 +270,10 @@ for (const width of [1920, 390]) {
     await panel.screenshot({
       path: `../artifacts/business-day/key-token-breakdown-${width}.png`,
     });
+    const donutTop = async (card: typeof share) =>
+      (await card.locator("svg").first().boundingBox())!.y -
+      (await card.boundingBox())!.y;
+    const previousDonutTop = await donutTop(share);
     failKeys = true;
     await page.clock.setFixedTime(new Date("2026-11-04T02:00:00Z"));
     await page.clock.runFor(15000);
@@ -281,6 +285,7 @@ for (const width of [1920, 390]) {
     });
     await expect(previousShare).toContainText("旧业务日快照 · 2026-11-03");
     await expect(previousShare.getByRole("listitem")).toHaveCount(3);
+    expect(await donutTop(previousShare)).toBe(previousDonutTop);
     await expect(previousShare.getByTitle("≥ 1,500,000 Token")).toHaveCount(2);
     await panel.getByRole("link", { name: /^未命名 Key 失败率 / }).click();
     await expect(page.getByText("请求明细", { exact: true })).toBeVisible();

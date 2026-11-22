@@ -354,6 +354,7 @@ export function KeyResults({
             c={oldWindow || query.isError ? "orange.8" : "dimmed"}
             role={query.isError ? "status" : undefined}
             title={snapshot}
+            className={styles.keySummarySnapshot}
           >
             {query.isError
               ? `更新失败 · 上次更新 ${businessTime(query.dataUpdatedAt / 1000, offset)}`

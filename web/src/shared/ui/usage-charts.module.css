@@ -61,6 +61,13 @@
   flex-direction: column;
 }
 
+.compactCard .chartHeader {
+  /* Keep the plot in place when the caption gains the previous-day label. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 0;
+}
+
 .compactCard .keyShareContent {
   flex: 1;
   min-height: 0;
