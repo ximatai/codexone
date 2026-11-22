@@ -378,8 +378,8 @@ test("overview keeps accessible trends, principal names, details and responsive 
     "stroke-dasharray",
     "27 100",
   );
-  const memoryGauge = page.getByRole("group", { name: "可用内存" });
-  await expect(memoryGauge.getByText("5.3 / 8.0 GiB")).toBeVisible();
+  const memoryGauge = page.getByRole("group", { name: "内存使用率" });
+  await expect(memoryGauge.getByText("剩余 5.3 GiB")).toBeVisible();
   await expect(page.getByText("窗口为上游观测，不是 Key 余额")).toHaveCount(0);
   await expect(
     page.getByRole("link", { name: "合成工作站 失败率 16.7%" }),
@@ -391,19 +391,19 @@ test("overview keeps accessible trends, principal names, details and responsive 
     page.getByRole("img", { name: "CPU 使用率最近一小时趋势" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("img", { name: "可用内存最近一小时趋势" }),
+    page.getByRole("img", { name: "内存使用率最近一小时趋势" }),
   ).toBeVisible();
-  await expect(page.getByRole("group", { name: "数据盘可用" })).toContainText(
-    "36%",
+  await expect(page.getByRole("group", { name: "数据盘使用率" })).toContainText(
+    "64%",
   );
   await expect(
-    page.getByRole("img", { name: "数据盘可用最近一小时趋势" }),
+    page.getByRole("img", { name: "数据盘使用率最近一小时趋势" }),
   ).toBeVisible();
   await expect(sidebar.getByText("最近一小时", { exact: true })).toHaveCount(0);
   for (const name of [
     "CPU 使用率",
-    "可用内存",
-    "数据盘可用",
+    "内存使用率",
+    "数据盘使用率",
     "CodexOne 内存占用",
   ]) {
     const plot = page.getByRole("img", { name: `${name}最近一小时趋势` });

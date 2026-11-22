@@ -145,6 +145,7 @@ test("render synthetic documentation screenshots", async ({ page }) => {
         resources: Array.from({ length: 121 }, (_, i) => ({
           unixSeconds: now - (120 - i) * 30,
           hostCPUPercent: 14 + Math.round(6 * Math.sin(i / 8)),
+          hostLoadAverage1m: 0.47,
           processResidentBytes:
             (26 + Math.round(2 * Math.sin(i / 9))) * 1024 ** 2,
           hostAvailableBytes: 3 * 1024 ** 3,
@@ -203,6 +204,11 @@ test("render synthetic documentation screenshots", async ({ page }) => {
   );
   await expect(
     page.getByRole("img", { name: /^Token 输出速率近 7 天/ }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("group", { name: "CPU 使用率" })
+      .getByText("0.47", { exact: true }),
   ).toBeVisible();
   await page.screenshot({
     path: "../docs/assets/overview.png",

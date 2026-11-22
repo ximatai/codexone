@@ -89,7 +89,7 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
     ]),
   );
   const view = renderPrivate(<AdminOverview />);
-  await screen.findByText("1.0 MiB", { exact: true });
+  await screen.findByText("剩余 1.0 MiB", { exact: true });
   expect(accounts.fetchAccounts).toHaveBeenCalledTimes(1);
   expect(usage.fetchKeySummary).toHaveBeenCalledTimes(1);
   expect(
