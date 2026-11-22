@@ -426,10 +426,13 @@ impl<A: NativeApplication> Session<A> {
 
     async fn step(&mut self, cancellation: &CancellationToken) -> Result<(), NativeEnd> {
         let next_timer = self.next_timer();
+        let downstream_write_failed = self.downstream.write_failed();
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => Err(NativeEnd::Cancelled),
             _ = wait_for_stop(&self.account_stop) => Err(NativeEnd::Protocol(ACCOUNT_STOPPED)),
+            _ = downstream_write_failed.cancelled(), if self.disconnected.is_none() =>
+                Err(NativeEnd::Downstream(SocketEnd::Write)),
             _ = sleep_until(next_timer) => self.expire().map_or(Ok(()), Err),
             Some((lane, id, result)) = self.uploads.next(), if !self.uploads.is_empty() => {
                 if self.attempts.get(&lane).is_some_and(|(request, _)| *request == id)
@@ -532,10 +535,10 @@ impl<A: NativeApplication> Session<A> {
     async fn schedule(&mut self) -> Result<(), NativeEnd> {
         if self.disconnected.is_some()
             || self.downstream.read_closed().is_cancelled()
-            || self
-                .upstream
-                .as_ref()
-                .is_some_and(|peer| peer.read_closed().is_cancelled())
+            || self.downstream.write_failed().is_cancelled()
+            || self.upstream.as_ref().is_some_and(|peer| {
+                peer.read_closed().is_cancelled() || peer.write_failed().is_cancelled()
+            })
             || (self.upstream.is_none() && !self.admitting_lanes.is_empty())
         {
             return Ok(());
@@ -673,10 +676,12 @@ impl<A: NativeApplication> Session<A> {
         if self.upstream.is_none() {
             self.account_stop = self.app.connection_stop(&identity);
             let read_closed = self.downstream.read_closed();
+            let write_failed = self.downstream.write_failed();
             let result = tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => return Err(NativeEnd::Cancelled),
                 _ = wait_for_stop(&self.account_stop) => Err(ConnectFailure::Cancelled),
+                _ = write_failed.cancelled() => return Err(NativeEnd::Downstream(SocketEnd::Write)),
                 _ = read_closed.cancelled() => return Err(NativeEnd::Downstream(SocketEnd::Eof)),
                 result = timeout_at(deadline, self.app.connect(&identity, deadline)) =>
                     result.unwrap_or(Err(ConnectFailure::TimedOut)),
@@ -754,11 +759,14 @@ impl<A: NativeApplication> Session<A> {
             }
         }
 
+        if self.downstream.write_failed().is_cancelled() {
+            return self.disconnect(SocketEnd::Write).await;
+        }
         if self.downstream.read_closed().is_cancelled() {
             return self.disconnect(SocketEnd::Eof).await;
         }
         let upstream = self.upstream.as_ref().expect("bound socket");
-        if upstream.read_closed().is_cancelled() {
+        if upstream.read_closed().is_cancelled() || upstream.write_failed().is_cancelled() {
             attempt.finish(NativeFinish::BeforeDispatch {
                 protocol: INDETERMINATE,
                 provider: None,
@@ -950,6 +958,7 @@ impl<A: NativeApplication> Session<A> {
             return Ok(());
         }
         let downstream_closed = self.downstream.read_closed();
+        let downstream_write_failed = self.downstream.write_failed();
         let disconnected = {
             let binding = timeout_at(
                 deadline,
@@ -959,10 +968,11 @@ impl<A: NativeApplication> Session<A> {
             tokio::select! {
                 biased;
                 _ = wait_for_stop(&self.account_stop) => return Err(NativeEnd::Protocol(ACCOUNT_STOPPED)),
-                _ = downstream_closed.cancelled() => true,
+                _ = downstream_write_failed.cancelled() => Some(SocketEnd::Write),
+                _ = downstream_closed.cancelled() => Some(SocketEnd::Eof),
                 result = &mut binding => {
                     result.unwrap_or(Err(DEADLINE)).map_err(NativeEnd::Protocol)?;
-                    false
+                    None
                 },
                 _ = self.cancellation.cancelled() => {
                     // A core fault can initiate shutdown before its binding reply reaches us.
@@ -973,8 +983,8 @@ impl<A: NativeApplication> Session<A> {
                 }
             }
         };
-        if disconnected {
-            self.disconnect(SocketEnd::Eof).await?;
+        if let Some(end) = disconnected {
+            self.disconnect(end).await?;
             if terminal {
                 self.finish_lane(
                     lane,
@@ -1331,8 +1341,13 @@ impl<A: NativeApplication> Session<A> {
             biased;
             _ = self.cancellation.cancelled() => Err(NativeEnd::Cancelled),
             _ = wait_for_stop(&self.account_stop) => Err(NativeEnd::Protocol(ACCOUNT_STOPPED)),
-            result = upstream.send(frame, deadline.min(Instant::now() + QUEUE_TIMEOUT)) =>
-                result.map(|_| ()).map_err(NativeEnd::Upstream),
+            result = upstream.send(frame, deadline.min(Instant::now() + QUEUE_TIMEOUT)) => {
+                match result {
+                    // The receive path handles writer failures after queued reader evidence.
+                    Ok(_) | Err(SocketEnd::Write) => Ok(()),
+                    Err(end) => Err(NativeEnd::Upstream(end)),
+                }
+            }
         }
     }
 

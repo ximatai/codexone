@@ -168,11 +168,9 @@ impl Exchange {
                 packet = peer.recv() => packet,
                 result = &mut upload, if !uploaded => {
                     uploaded = true;
-                    match result {
-                        Ok(sent) => self.turns.lock().unwrap().active.get_mut("").expect("bridge turn").sent = Some(sent),
-                        Err(_) if Instant::now() >= deadline => return Err(protocol(DEADLINE)),
-                        // A close may have reached the sole reader ahead of the writer failure.
-                        Err(_) => {}
+                    // The reader reports write failure after delivering observed events.
+                    if let Ok(sent) = result {
+                        self.turns.lock().unwrap().active.get_mut("").expect("bridge turn").sent = Some(sent);
                     }
                     continue;
                 }

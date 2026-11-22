@@ -1,10 +1,12 @@
 use std::{
     future::{pending, ready},
+    io,
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -19,7 +21,7 @@ use codexone_websocket::{
 use futures_util::{SinkExt, StreamExt};
 use http::{HeaderMap, HeaderValue, Request, StatusCode};
 use tokio::{
-    io::{DuplexStream, duplex},
+    io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf, duplex},
     net::TcpListener,
     sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc},
     time::{Instant, timeout},
@@ -238,7 +240,58 @@ async fn upstream_handshake_injects_credentials_and_never_follows_redirects() {
     timeout(TEST_TIMEOUT, server).await.unwrap().unwrap();
 }
 
+#[derive(Default)]
+struct WriteFault {
+    enabled: AtomicBool,
+    attempted: Notify,
+}
+
+// Fail only writes after the test arms the fault. The remote can still send
+// events and keep its socket open, so an EOF cannot mask a missed write error.
+struct FaultySocket {
+    io: DuplexStream,
+    fault: Arc<WriteFault>,
+}
+
+impl AsyncRead for FaultySocket {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_read(cx, buffer)
+    }
+}
+
+impl AsyncWrite for FaultySocket {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if self.fault.enabled.load(Ordering::Relaxed) {
+            self.fault.attempted.notify_one();
+            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+        }
+        Pin::new(&mut self.io).poll_write(cx, bytes)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_shutdown(cx)
+    }
+}
+
 async fn provider_pair() -> (Socket, WebSocketStream<DuplexStream>) {
+    provider_pair_with_fault(Arc::default()).await
+}
+
+async fn provider_pair_with_fault(
+    fault: Arc<WriteFault>,
+) -> (Socket, WebSocketStream<DuplexStream>) {
     let (client, provider) = duplex(64 * 1024);
     let handshake = UpstreamHandshake::new(
         "ws://synthetic.invalid/responses".parse().unwrap(),
@@ -250,7 +303,7 @@ async fn provider_pair() -> (Socket, WebSocketStream<DuplexStream>) {
     let cancellation = CancellationToken::new();
     let (client, provider) = tokio::join!(
         handshake.connect_over(
-            ready(Ok(client)),
+            ready(Ok(FaultySocket { io: client, fault })),
             Instant::now() + TEST_TIMEOUT,
             &cancellation
         ),
@@ -307,6 +360,96 @@ async fn bridge_delivers_terminal_before_immediate_eof_and_json_is_unwrapped() {
     assert!(output[0].terminal);
     assert_eq!(member(&output[0].document, "id"), "resp_case");
     timeout(TEST_TIMEOUT, provider).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn bridge_write_failure_ends_with_open_reader_and_never_falls_back() {
+    let fault = Arc::new(WriteFault::default());
+    let (upstream, mut provider) = provider_pair_with_fault(fault.clone()).await;
+    fault.enabled.store(true, Ordering::Relaxed);
+    let result = timeout(
+        TEST_TIMEOUT,
+        bridge(
+            ready(Ok(upstream)),
+            CREATE.to_owned().into(),
+            BridgeOptions {
+                deadline: Instant::now() + 10 * TEST_TIMEOUT,
+                ..bridge_options(false)
+            },
+            |_| panic!("no provider event"),
+            |_| ready(Ok(())),
+        ),
+    )
+    .await
+    .expect("write failure should not wait for the execution deadline");
+    assert!(matches!(
+        result,
+        Err(BridgeFailure::Interrupted {
+            socket: Some(SocketEnd::Write),
+            ..
+        })
+    ));
+    fault.attempted.notified().await;
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, provider.next()).await.unwrap(),
+        None | Some(Err(_))
+    ));
+}
+
+#[tokio::test]
+async fn bridge_delivers_observed_terminal_after_control_write_failure() {
+    let fault = Arc::new(WriteFault::default());
+    let (upstream, mut provider) = provider_pair_with_fault(fault.clone()).await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let release = Arc::new(Notify::new());
+    let output_gate = release.clone();
+    let operation = tokio::spawn(bridge(
+        ready(Ok(upstream)),
+        CREATE.to_owned().into(),
+        bridge_options(true),
+        move |event| {
+            if let BridgeEvidence::Event(document) = event
+                && member(document, "type") == "response.completed"
+            {
+                observed.fetch_add(1, Ordering::Relaxed);
+            }
+        },
+        move |output| {
+            let output_gate = output_gate.clone();
+            async move {
+                if !output.terminal {
+                    output_gate.notified().await;
+                }
+                Ok(())
+            }
+        },
+    ));
+    assert_eq!(read(&mut provider).await, text(CREATE));
+    fault.enabled.store(true, Ordering::Relaxed);
+    provider
+        .send(text(
+            r#"{"type":"response.created","response":{"id":"resp_case"}}"#,
+        ))
+        .await
+        .unwrap();
+    provider.send(text(COMPLETED)).await.unwrap();
+    provider
+        .send(Message::Ping(Vec::new().into()))
+        .await
+        .unwrap();
+    timeout(TEST_TIMEOUT, fault.attempted.notified())
+        .await
+        .unwrap();
+    release.notify_one();
+    assert!(
+        timeout(TEST_TIMEOUT, operation)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_ok()
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]
@@ -551,6 +694,8 @@ struct TestApp {
     terminal_usage: Mutex<Vec<(usize, i64)>>,
     binding: Mutex<Option<Arc<BindingHold>>>,
     finished: Mutex<Vec<(usize, NativeFinish)>>,
+    fail_first_upstream_write: bool,
+    downstream_fault: Arc<WriteFault>,
 }
 
 impl NativeApplication for TestApp {
@@ -593,7 +738,11 @@ impl NativeApplication for TestApp {
     ) -> Result<Socket, codexone_websocket::ConnectFailure> {
         assert_eq!(*identity, 7);
         self.connects.fetch_add(1, Ordering::Relaxed);
-        let (client, server) = provider_pair().await;
+        let fault = Arc::new(WriteFault::default());
+        let (client, server) = provider_pair_with_fault(fault.clone()).await;
+        fault
+            .enabled
+            .store(self.fail_first_upstream_write, Ordering::Relaxed);
         self.provider
             .lock()
             .unwrap()
@@ -665,7 +814,13 @@ async fn native_client_with(
     *app.provider.lock().unwrap() = Some(tx);
     let (client, server) = duplex(socket_capacity);
     let client = WebSocketStream::from_raw_socket(client, Role::Client, None).await;
-    let server = downstream_socket(server, budget);
+    let server = downstream_socket(
+        FaultySocket {
+            io: server,
+            fault: app.downstream_fault.clone(),
+        },
+        budget,
+    );
     let task =
         tokio::spawn(
             async move { serve_native(server, app, NativeOptions::default(), &cancel).await },
@@ -680,6 +835,85 @@ async fn provider_ready(
         .await
         .unwrap()
         .unwrap()
+}
+
+#[tokio::test]
+async fn native_provider_write_failure_finishes_once_and_releases_ingress() {
+    let app = Arc::new(TestApp {
+        fail_first_upstream_write: true,
+        ..TestApp::default()
+    });
+    let budget = SharedBudget::new(4096);
+    let (mut client, mut receiver, task) =
+        native_client_with(app.clone(), budget.clone(), 4096, CancellationToken::new()).await;
+    client.send(text(CREATE)).await.unwrap();
+    let mut provider = provider_ready(&mut receiver).await;
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, task).await.unwrap().unwrap(),
+        NativeEnd::Upstream(SocketEnd::Write)
+    ));
+    assert_eq!(app.connects.load(Ordering::Relaxed), 1);
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 1);
+    assert_eq!(budget.semaphore.available_permits(), budget.total);
+    assert!(matches!(
+        app.finished.lock().unwrap().as_slice(),
+        [(
+            0,
+            NativeFinish::Indeterminate {
+                socket: Some(SocketEnd::Write),
+                client_cancelled: false,
+                ..
+            }
+        )]
+    ));
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, provider.next()).await.unwrap(),
+        None | Some(Err(_))
+    ));
+}
+
+#[tokio::test]
+async fn native_downstream_control_write_failure_drains_terminal_and_releases_ingress() {
+    let app = Arc::new(TestApp::default());
+    let budget = SharedBudget::new(4096);
+    let (mut client, mut receiver, task) =
+        native_client_with(app.clone(), budget.clone(), 4096, CancellationToken::new()).await;
+    client.send(text(CREATE)).await.unwrap();
+    let mut provider = provider_ready(&mut receiver).await;
+    read_json(&mut provider).await;
+    provider
+        .send(text(
+            r#"{"type":"response.created","response":{"id":"resp_case"}}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        member(&read_json(&mut client).await, "type"),
+        "response.created"
+    );
+    app.downstream_fault.enabled.store(true, Ordering::Relaxed);
+    client.send(Message::Ping(Vec::new().into())).await.unwrap();
+    let interrupt = read_json(&mut provider).await;
+    assert_eq!(member(&interrupt, "type"), "response.interrupt");
+    assert_eq!(member(&interrupt, "response_id"), "resp_case");
+    provider.send(text(COMPLETED)).await.unwrap();
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, task).await.unwrap().unwrap(),
+        NativeEnd::Downstream(SocketEnd::Write)
+    ));
+    assert_eq!(app.connects.load(Ordering::Relaxed), 1);
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 1);
+    assert_eq!(*app.terminal_usage.lock().unwrap(), [(0, 5)]);
+    assert_eq!(budget.semaphore.available_permits(), budget.total);
+    assert!(matches!(
+        app.finished.lock().unwrap().as_slice(),
+        [(
+            0,
+            NativeFinish::Terminal {
+                client_cancelled: true
+            }
+        )]
+    ));
 }
 
 #[tokio::test]
