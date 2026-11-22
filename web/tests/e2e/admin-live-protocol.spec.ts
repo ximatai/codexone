@@ -574,10 +574,8 @@ test("push updates resources without HTTP polling and resumes after fallback", a
   const overviewReads = () =>
     state.reads.filter(({ path }) => overviewPaths.has(path)).length;
   const initialReads = overviewReads();
-  const loadValue = page
-    .getByRole("group", { name: "CPU 使用率" })
-    .getByText("剩余 75%", { exact: true });
-  await expect(loadValue).toHaveCount(0);
+  const cpuGauge = page.getByRole("group", { name: "CPU 使用率" });
+  await expect(cpuGauge).toHaveText("CPU 使用率未知");
   const diskTrend = page.getByRole("img", {
     name: "数据盘使用率最近一小时趋势",
   });
@@ -612,7 +610,7 @@ test("push updates resources without HTTP polling and resumes after fallback", a
           hostLoadAverage1m: 0,
           hostAvailableBytes: 6,
           hostTotalBytes: 8,
-          processResidentBytes: 256 * 1024 ** 2,
+          processResidentBytes: 1280 * 1024 ** 2,
         },
       ],
     },
@@ -626,10 +624,7 @@ test("push updates resources without HTTP polling and resumes after fallback", a
       sections: { storage: resource },
     }),
   );
-  await expect(page.getByRole("group", { name: "CPU 使用率" })).toContainText(
-    "25%",
-  );
-  await expect(loadValue).toBeVisible();
+  await expect(cpuGauge).toHaveText("CPU 使用率25%0.00");
   await expect(page.getByRole("group", { name: "内存使用率" })).toContainText(
     "25%",
   );
@@ -643,7 +638,7 @@ test("push updates resources without HTTP polling and resumes after fallback", a
     ["CPU 使用率", "25.0%"],
     ["内存使用率", "25.0%"],
     ["数据盘使用率", "60.0%"],
-    ["CodexOne 内存占用", "256.0 MiB"],
+    ["CodexOne 内存占用", "1280.0 MiB"],
   ]) {
     const chart = page.getByRole("img", { name: `${label}最近一小时趋势` });
     await expect(

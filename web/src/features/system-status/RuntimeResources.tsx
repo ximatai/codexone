@@ -13,9 +13,7 @@ const sampleTime = new Intl.DateTimeFormat("zh-CN", {
 
 function formatResourceValue(value: number, percent: boolean) {
   if (percent) return `${value.toFixed(1)}%`;
-  return value >= GiB
-    ? `${(value / GiB).toFixed(2)} GiB`
-    : `${(value / MiB).toFixed(1)} MiB`;
+  return `${(value / MiB).toFixed(1)} MiB`;
 }
 
 function usedPercent(available: unknown, total: unknown) {
@@ -230,7 +228,6 @@ export function RuntimeResources({
     diskUsedPercent: usedPercent(sample.diskAvailableBytes, volume),
   }));
   const latest = samples.at(-1);
-  const cpu = latest?.hostCPUPercent;
   return (
     <Paper withBorder p="md">
       <Stack gap="xs">
@@ -245,8 +242,8 @@ export function RuntimeResources({
         <div className={styles.resourceGauges}>
           <ResourceGauge
             label="CPU 使用率"
-            percent={cpu ?? null}
-            detail={cpu == null ? undefined : `剩余 ${(100 - cpu).toFixed(0)}%`}
+            percent={latest?.hostCPUPercent ?? null}
+            detail={latest?.hostLoadAverage1m?.toFixed(2)}
           />
           <ResourceGauge
             label="内存使用率"
