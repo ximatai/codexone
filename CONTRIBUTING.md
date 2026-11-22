@@ -41,7 +41,7 @@ python3 scripts/check_docs.py
 
 定向前端检查为 `npm --prefix web run lint`、`npm --prefix web run format:check`、`npm --prefix web run typecheck` 和 `npm --prefix web test`。标准 Chromium 首次准备可在 web 下执行 `npx playwright install chromium --only-shell`。依赖/浏览器安装需要网络；离线环境缺依赖时报告限制，不声称通过。
 
-完整浏览器套件使用上面构建的 debug 网关。通过 `CODEXONE_WEB_TEST_BINARY` 可指定其他可执行文件，建议使用绝对路径。e2e 通过严格端口的 `vite preview` 测试生产 `web/dist`，不启动开发服务器。`verify.sh --web` 会构建一次（含 typecheck）；单独运行 `npm --prefix web run test:e2e:chrome -- ui-review-rework` 前，先执行 `npm --prefix web run build`，修改源码后也需重新构建。CI 分片及路径筛选见[验证约定](docs/development/verification.md)。
+完整浏览器套件通过严格端口的 `vite preview` 测试生产 `web/dist`。其中 `admin-live-real` 由网关提供同一份 SPA，默认使用 release 网关。可通过 `CODEXONE_WEB_TEST_BINARY` 指定可执行文件，建议使用绝对路径。`verify.sh --web` 会构建一次（含 typecheck）；单独运行 `npm --prefix web run test:e2e:chrome -- ui-review-rework` 前，先执行 `npm --prefix web run build`，修改源码后也需重新构建。真实网关联调命令、CI 分片及路径筛选见[验证约定](docs/development/verification.md)。
 
 正式发版由 tag 工作流执行发布门禁。需要提前验证发布链路或制品时，见[可选的发布演练](docs/development/releasing.md)。
 

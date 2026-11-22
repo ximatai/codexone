@@ -74,7 +74,19 @@ Rust 按 Cargo crate 运行单元和集成测试，网关还包含托管进程�
 
 GitHub Actions 的 Verify 和 Release 通过 `CODEXONE_CI_APT_MIRROR` 使用 Kernel.org 的 Ubuntu HTTPS 镜像，APT 继续验证 Ubuntu 签名。相关容器构建仅在安装依赖时使用该镜像，默认的本地构建沿用基础镜像软件源。
 
-前端完整浏览器集合中的 `admin-live-real` 默认启动 `rust/gateway/target/release/codexone`，也可通过 `CODEXONE_WEB_TEST_BINARY` 指定可执行文件。CI 的 `frontend-live` 用生产 SPA 和优化后的 Rust 网关运行 Chromium，覆盖实时 WebSocket 与 HTTP 回退。选中前端时，同一 job 先运行 lint、格式、单元测试、构建及合成 API 浏览器套件。
+`admin-live-real` 默认启动 `rust/gateway/target/release/codexone`，也可通过 `CODEXONE_WEB_TEST_BINARY` 指定可执行文件。CI 的 `frontend-live` 运行生产 SPA、优化后的 Rust 网关和 Chromium。选中前端时，同一 job 先运行 lint、格式、单元测试、构建及合成 API 浏览器套件。
+
+- 每次 `frontend-live` 都运行 `@smoke`。实际浏览器登录并使用会话 Cookie 和 CSRF 创建 Key，确认首笔请求完成后由原生 WebSocket 更新首页。断开已建立的连接并阻止重连，确认第二笔请求的结算结果经真实 HTTP 轮询显示在同一行。权限检查覆盖未登录读取和登录后缺少 CSRF 的写入拒绝。
+- `admin_live_visual` 选中时，同一 job 还运行 `@visual`。实时和 HTTP 回退模式各施加 60 秒合成请求流量，检查 CLS 为 0、数字动画及样式、CSP、窄屏无横向溢出、减少动态效果，以及用量图表内边距。首页和实时渲染、用量、共享布局和组件、相关构建配置与夹具，以及修改 Verify 工作流或筛选器时选中。手动 Verify 与触发全量的 main 推送也选中。具体路径见 `scripts/ci_changes.sh`。
+
+本地先构建网关和 SPA，再按需选择联调范围。省略 `--grep` 可同时运行两组。
+
+```sh
+./scripts/verify_rust.sh --release-build
+npm --prefix web run build
+npm --prefix web run test:e2e -- admin-live-real --workers=1 --grep @smoke
+npm --prefix web run test:e2e -- admin-live-real --workers=1 --grep @visual
+```
 
 `scripts/verify_tls_proxy.py` 使用临时 CA、独立 Nginx prefix/端口及合成管理身份，实际验证管理 WSS 快照、退出登录关闭、精确 Host/Origin/路径/认证和监听面隔离。它只在临时代理删除 live upgrade 路径来验证旧模板仍可提供 HTTPS 管理，再恢复配置；分别以 30/60 秒 read idle 维持同一条连接越过窗口，响应心跳并验证双向控制帧。期间有 freshness 消息，不能声称只靠 ping 保活。`--browser` 另运行 Chrome 直连 HTTPS 的登录、实时连接、Key 创建/禁用/刷新及退出；只允许该临时证书的 SPKI，不改系统信任或绕过 Host/Origin。全部为合成接口检查，不代表已部署代理或真实提供者验收。
 

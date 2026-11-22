@@ -112,7 +112,15 @@ def check_live_browser(workflow):
     assert 'rust-gateway-probe' not in live, 'Browser tests do not use the test harness'
     assert 'CODEXONE_WEB_TEST_BINARY: ../.build/live/codexone' in live, 'Real browser must use the restored gateway'
     assert "CODEXONE_WEB_STUBS_ONLY: '0'" in live, 'Real browser must run its gateway tests'
-    assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Retain real gateway browser checks'
+    assert 'admin_live_visual: ${{ steps.filter.outputs.admin_live_visual }}' in jobs['changes'], (
+        'Expose the visual selection to the browser job')
+    assert '''      - name: Verify login and updates through the real gateway
+        run: npm run test:e2e -- admin-live-real --workers=1 --grep @smoke''' in live, (
+        'Run the real gateway smoke for every browser job')
+    assert '''      - name: Verify sustained live and fallback rendering
+        if: needs.changes.outputs.admin_live_visual == 'true'
+        run: npm run test:e2e -- admin-live-real --workers=1 --grep @visual''' in live, (
+        'Run real browser visual checks when selected')
     assert '''        if: needs.changes.outputs.frontend == 'true'
         env:
           CODEXONE_WEB_STUBS_ONLY: '1'
