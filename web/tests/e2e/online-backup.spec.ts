@@ -118,7 +118,7 @@ test("backup attention opens storage details with last success on desktop and mo
   await expect(reminders.getByText("在线定时备份未启用。")).toBeVisible();
   mode = "normal";
   await page.reload();
-  await expect(page.getByRole("group", { name: "数据盘可用" })).toContainText(
+  await expect(page.getByRole("group", { name: "数据盘使用率" })).toContainText(
     "8.4 GiB",
   );
   await expect(reminders).toHaveCount(0);

@@ -18,18 +18,43 @@ function formatResourceValue(value: number, percent: boolean) {
     : `${(value / MiB).toFixed(1)} MiB`;
 }
 
+function usedPercent(available: unknown, total: unknown) {
+  if (
+    typeof available !== "number" ||
+    typeof total !== "number" ||
+    !Number.isFinite(total) ||
+    total <= 0 ||
+    !(available >= 0 && available <= total)
+  )
+    return undefined;
+  return ((total - available) / total) * 100;
+}
+
+function remainingSpace(bytes: unknown) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0)
+    return undefined;
+  return bytes < GiB
+    ? `剩余 ${(bytes / MiB).toFixed(1)} MiB`
+    : `剩余 ${(bytes / GiB).toFixed(1)} GiB`;
+}
+
+type TrendSample = ResourceSample & {
+  memoryUsedPercent?: number;
+  diskUsedPercent?: number;
+};
+
 function ResourceTrend({
   samples,
   label,
   field,
   scale,
 }: {
-  samples: ResourceSample[];
+  samples: TrendSample[];
   label: string;
   field:
     | "hostCPUPercent"
-    | "hostAvailableBytes"
-    | "diskAvailableBytes"
+    | "memoryUsedPercent"
+    | "diskUsedPercent"
     | "processResidentBytes";
   scale?: number;
 }) {
@@ -37,14 +62,14 @@ function ResourceTrend({
   const latest = samples.at(-1);
   const end = latest?.unixSeconds ?? 0;
   const currentValue = latest?.[field];
-  const percent = field === "hostCPUPercent";
+  const percent = field !== "processResidentBytes";
   const readout =
     currentValue == null ? "未知" : formatResourceValue(currentValue, percent);
   const maximum =
     scale ?? Math.max(1, ...samples.map((sample) => sample[field] ?? 0)) * 1.25;
   const xAt = (time: number) => (time - end + 3600) / 36;
   const yAt = (value: number) => 29 - (Math.min(value, maximum) / maximum) * 28;
-  let nearest: ResourceSample | undefined;
+  let nearest: TrendSample | undefined;
   if (hoverTime != null) {
     for (const sample of samples) {
       const distance = Math.abs(sample.unixSeconds - hoverTime);
@@ -57,7 +82,7 @@ function ResourceTrend({
   }
   const activeValue = nearest?.[field];
   const hasSamples = samples.some((sample) => sample[field] != null);
-  let previous: ResourceSample | undefined;
+  let previous: TrendSample | undefined;
   const path = samples
     .map((sample) => {
       const value = sample[field];
@@ -194,26 +219,18 @@ export function RuntimeResources({
   storage?: ReturnType<typeof parseStorage>;
   stale: boolean;
 }) {
-  const samples = storage?.resources ?? [];
-  const latest = samples.at(-1);
-  const total = latest?.hostTotalBytes;
-  const available = latest?.hostAvailableBytes;
-  const cpu = latest?.hostCPUPercent;
-  const load = latest?.hostLoadAverage1m;
-  const memoryPercent =
-    available != null && total && available <= total
-      ? (available / total) * 100
-      : null;
   const disk = storage?.availableBytes;
   const volume = storage?.volumeTotalBytes;
-  const diskFree =
-    typeof disk === "number" &&
-    typeof volume === "number" &&
-    volume > 0 &&
-    disk >= 0 &&
-    disk <= volume
-      ? (disk / volume) * 100
-      : null;
+  const samples = (storage?.resources ?? []).map((sample) => ({
+    ...sample,
+    memoryUsedPercent: usedPercent(
+      sample.hostAvailableBytes,
+      sample.hostTotalBytes,
+    ),
+    diskUsedPercent: usedPercent(sample.diskAvailableBytes, volume),
+  }));
+  const latest = samples.at(-1);
+  const cpu = latest?.hostCPUPercent;
   return (
     <Paper withBorder p="md">
       <Stack gap="xs">
@@ -229,27 +246,17 @@ export function RuntimeResources({
           <ResourceGauge
             label="CPU 使用率"
             percent={cpu ?? null}
-            detail={load?.toFixed(2)}
+            detail={cpu == null ? undefined : `剩余 ${(100 - cpu).toFixed(0)}%`}
           />
           <ResourceGauge
-            label="可用内存"
-            percent={memoryPercent}
-            detail={
-              available == null
-                ? undefined
-                : `${(available / GiB).toFixed(1)}${total ? ` / ${(total / GiB).toFixed(1)}` : ""} GiB`
-            }
+            label="内存使用率"
+            percent={latest?.memoryUsedPercent ?? null}
+            detail={remainingSpace(latest?.hostAvailableBytes)}
           />
           <ResourceGauge
-            label="数据盘可用"
-            percent={diskFree}
-            detail={
-              typeof disk === "number"
-                ? disk < GiB
-                  ? `${(disk / MiB).toFixed(1)} MiB`
-                  : `${(disk / GiB).toFixed(1)} GiB`
-                : undefined
-            }
+            label="数据盘使用率"
+            percent={usedPercent(disk, volume) ?? null}
+            detail={remainingSpace(disk)}
           />
         </div>
         <div className={styles.resourceHistory}>
@@ -261,18 +268,16 @@ export function RuntimeResources({
           />
           <ResourceTrend
             samples={samples}
-            label="可用内存"
-            field="hostAvailableBytes"
-            scale={total}
+            label="内存使用率"
+            field="memoryUsedPercent"
+            scale={100}
           />
           {samples.some((sample) => sample.diskAvailableBytes != null) && (
             <ResourceTrend
               samples={samples}
-              label="数据盘可用"
-              field="diskAvailableBytes"
-              scale={
-                typeof volume === "number" && volume > 0 ? volume : undefined
-              }
+              label="数据盘使用率"
+              field="diskUsedPercent"
+              scale={100}
             />
           )}
           <ResourceTrend

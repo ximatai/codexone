@@ -576,9 +576,11 @@ test("push updates resources without HTTP polling and resumes after fallback", a
   const initialReads = overviewReads();
   const loadValue = page
     .getByRole("group", { name: "CPU 使用率" })
-    .getByText("0.00", { exact: true });
+    .getByText("剩余 75%", { exact: true });
   await expect(loadValue).toHaveCount(0);
-  const diskTrend = page.getByRole("img", { name: "数据盘可用最近一小时趋势" });
+  const diskTrend = page.getByRole("img", {
+    name: "数据盘使用率最近一小时趋势",
+  });
   await expect(diskTrend).toHaveCount(0);
   await page.clock.fastForward(16000);
   expect(overviewReads()).toBe(initialReads);
@@ -628,19 +630,19 @@ test("push updates resources without HTTP polling and resumes after fallback", a
     "25%",
   );
   await expect(loadValue).toBeVisible();
-  await expect(page.getByRole("group", { name: "可用内存" })).toContainText(
-    "75%",
+  await expect(page.getByRole("group", { name: "内存使用率" })).toContainText(
+    "25%",
   );
-  await expect(page.getByRole("group", { name: "数据盘可用" })).toContainText(
-    "40%",
+  await expect(page.getByRole("group", { name: "数据盘使用率" })).toContainText(
+    "60%",
   );
   await expect(
     page.getByRole("img", { name: "CodexOne 内存占用最近一小时趋势" }),
   ).toBeVisible();
   for (const [label, value] of [
     ["CPU 使用率", "25.0%"],
-    ["可用内存", "0.0 MiB"],
-    ["数据盘可用", "40.00 GiB"],
+    ["内存使用率", "25.0%"],
+    ["数据盘使用率", "60.0%"],
     ["CodexOne 内存占用", "256.0 MiB"],
   ]) {
     const chart = page.getByRole("img", { name: `${label}最近一小时趋势` });
