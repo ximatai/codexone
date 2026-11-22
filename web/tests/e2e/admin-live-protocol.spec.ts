@@ -332,10 +332,11 @@ test("a new server epoch replaces the in-flight snapshot", async ({
   await expect(trend.locator("line.recharts-reference-line-line")).toHaveCount(
     2,
   );
+  // The chart handles mouse movement even when the active indicator covers this dot.
   await trend
-    .locator("circle.recharts-dot")
+    .locator('circle.recharts-dot[r="2"]')
     .last()
-    .hover({ position: { x: 3, y: 2 } });
+    .hover({ force: true, position: { x: 3, y: 2 } });
   await expect(page.getByRole("tooltip")).toContainText(
     "43 Token/s · 5 笔样本",
   );

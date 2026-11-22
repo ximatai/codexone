@@ -61,6 +61,7 @@ struct Reader<T> {
     output: WriteQueue,
     bytes: Arc<Semaphore>,
     closed: CancellationToken,
+    write_failed: CancellationToken,
 }
 
 impl<T> Reader<T> {
@@ -115,6 +116,7 @@ pub(crate) struct Peer<T = Utf8Bytes> {
     output_bytes: Arc<Semaphore>,
     tasks: JoinSet<()>,
     read_closed: CancellationToken,
+    write_failed: CancellationToken,
     provider: bool,
 }
 
@@ -128,7 +130,12 @@ impl Peer<IngressMessage> {
             Writer::Downstream(write),
             move |reader| async move {
                 loop {
-                    match frames.next().await {
+                    let frame = tokio::select! {
+                        biased;
+                        _ = reader.write_failed.cancelled() => return SocketEnd::Write,
+                        frame = frames.next() => frame,
+                    };
+                    match frame {
                         Ok(FrameEvent::Text(message)) => {
                             let size = message.text.len();
                             if let Err(end) = reader.push(message, size).await {
@@ -142,14 +149,14 @@ impl Peer<IngressMessage> {
                             };
                             let command =
                                 Write::Frame(Message::Text(websocket_ingress_error(status, code)));
-                            if enqueue_control(&reader.output, command).await.is_err() {
-                                return SocketEnd::Congested;
+                            if let Err(end) = enqueue_control(&reader.output, command).await {
+                                return end;
                             }
                         }
                         Ok(FrameEvent::Ping(payload)) => {
                             let command = Write::Frame(Message::Pong(payload.into()));
-                            if enqueue_control(&reader.output, command).await.is_err() {
-                                return SocketEnd::Congested;
+                            if let Err(end) = enqueue_control(&reader.output, command).await {
+                                return end;
                             }
                         }
                         Ok(FrameEvent::Close(frame)) => {
@@ -190,12 +197,19 @@ impl<T: Send + 'static> Peer<T> {
             Writer::Provider(sink),
             move |reader| async move {
                 loop {
-                    let text = match stream.next().await {
+                    // Terminate through the reader to preserve events already observed and
+                    // any close frame the reader is currently acknowledging.
+                    let frame = tokio::select! {
+                        biased;
+                        _ = reader.write_failed.cancelled() => return SocketEnd::Write,
+                        frame = stream.next() => frame,
+                    };
+                    let text = match frame {
                         Some(Ok(Message::Text(text))) => text,
                         // The Tungstenite reader queues protocol replies; only the writer flushes them.
                         Some(Ok(Message::Ping(_))) => {
-                            if enqueue_control(&reader.output, Write::Flush).await.is_err() {
-                                return SocketEnd::Congested;
+                            if let Err(end) = enqueue_control(&reader.output, Write::Flush).await {
+                                return end;
                             }
                             continue;
                         }
@@ -245,11 +259,14 @@ impl<T: Send + 'static> Peer<T> {
         let mut tasks = JoinSet::new();
         let read_closed = CancellationToken::new();
         let reader_closed = read_closed.clone();
+        let write_failed = CancellationToken::new();
+        let writer_failed = write_failed.clone();
         let read = reader(Reader {
             input: incoming.clone(),
             output: output.clone(),
             bytes: Arc::new(Semaphore::new(input_bytes)),
             closed: read_closed.clone(),
+            write_failed: write_failed.clone(),
         });
         tasks.spawn(async move {
             let end = read.await;
@@ -281,6 +298,9 @@ impl<T: Send + 'static> Peer<T> {
                     upload.mark_sent();
                 }
                 drop(upload);
+                if result.is_err() {
+                    writer_failed.cancel();
+                }
                 if let Some(receipt) = receipt {
                     let _ = receipt.send(result);
                 }
@@ -295,12 +315,17 @@ impl<T: Send + 'static> Peer<T> {
             output_bytes: Arc::new(Semaphore::new(output_bytes)),
             tasks,
             read_closed,
+            write_failed,
             provider,
         }
     }
 
     pub fn read_closed(&self) -> CancellationToken {
         self.read_closed.clone()
+    }
+
+    pub fn write_failed(&self) -> CancellationToken {
+        self.write_failed.clone()
     }
 
     pub async fn recv(&mut self) -> Result<Packet<T>, SocketEnd> {
