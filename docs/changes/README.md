@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [原生 Images 聚合保留逐图元数据](native-image-completion-metadata/proposal.md) · [任务](native-image-completion-metadata/tasks.md)
+
 - [原生 WebSocket 预热的空输出](native-ws-warmup/proposal.md) · [任务](native-ws-warmup/tasks.md)
 
 - [首页 Key 今日估算费用](overview-key-estimated-cost/proposal.md) · [任务](overview-key-estimated-cost/tasks.md)

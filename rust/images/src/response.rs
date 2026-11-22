@@ -650,8 +650,10 @@ fn assemble(event: JsonValue) -> Result<JsonObject, ImageError> {
         let created = fields.remove("created_at").ok_or_else(invalid_image)?;
         let mut item = JsonObject::new();
         item.insert("b64_json", image);
-        if let Some(revised) = fields.remove("revised_prompt") {
-            item.insert("revised_prompt", revised);
+        for name in ["revised_prompt", "generation_id", "image_metadata"] {
+            if let Some(value) = fields.remove(name) {
+                item.insert(name, value);
+            }
         }
         let mut result = JsonObject::new();
         result.insert("created", created);
