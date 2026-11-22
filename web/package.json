@@ -21,7 +21,7 @@
     "format:check": "prettier --check src tests *.ts *.json .oxlintrc.json"
   },
   "dependencies": {
-    "@formkit/auto-animate": "0.10.0",
+    "@formkit/auto-animate": "0.10.2",
     "@mantine/charts": "9.8.1",
     "@mantine/core": "9.8.1",
     "@mantine/dates": "9.8.1",
