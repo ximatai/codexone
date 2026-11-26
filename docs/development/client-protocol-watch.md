@@ -16,8 +16,13 @@
 
 ## 待验证的客户端变化
 
-- 官方 main 的客户端按 1 MiB 分帧发送大消息，可读取握手响应中的 `x-codex-websocket-max-message-bytes` 并在超限时选择 HTTP。进入稳定版后，先核对客户端编码字节数与网关重编码边界，再决定握手声明值。用固定客户端验证发送前回退及响应已经开始时的处理。 [固定源码](https://github.com/openai/codex/blob/1f1f6ebb6c156d5ab1d4745155f340b897b24f02/codex-rs/codex-api/src/endpoint/responses_websocket.rs#L1113)
 - GIF 工具参数受客户端门控。使用启用 GIF 的客户端分别验收原生生成和参考图编辑，检查实际格式。客户端附件存储可能返回文件引用，出现兼容问题时再核对文件归属和访问范围。 [GIF 请求源码](https://github.com/openai/codex/blob/1f1f6ebb6c156d5ab1d4745155f340b897b24f02/codex-rs/codex-api/src/images.rs) · [稳定版图片工具](https://github.com/openai/codex/blob/ce21072c90d32c40af7a55b60b2fb35c84a43a6a/codex-rs/ext/image-generation/src/tool.rs#L266)
+
+## CLI 0.172.0 验收
+
+2026-11-26 在 macOS arm64 用固定 CLI 和合成回环上游验收。含图会话通过同连接续接、断线后重送历史和图片、1 MiB WebSocket 分片、超出 12 MiB 握手阈值时在发送前切换 HTTP，以及流式压缩后续接。独立夹具让首个 HTTP 上传在收到部分正文后停住，网关返回 408，CLI 重发相同请求，只有上传完整的请求派发上游。
+
+合成无状态上游过载在 HTTP 提交前返回 503，CLI 可识别过载。无状态的项目开支上限经 HTTP 和原生 WebSocket 返回 429，CLI 可识别项目范围。验证覆盖合法 Retry-After、单次网关派发及既有用量证明。Windows Desktop 和实际提供者留待验证。[官方客户端版本说明](https://github.com/openai/codex/releases/tag/rust-v0.172.0)
 
 ## CLI 0.171.0 验收
 
