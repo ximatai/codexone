@@ -111,13 +111,32 @@ pub fn http_provider_failure(
 }
 
 pub(crate) fn event_provider_failure(event: &JsonValue) -> ProviderFailure {
-    classify(
-        numeric_field(event, "status").or_else(|| numeric_field(event, "status_code")),
-        event.get("error").or(Some(event)),
+    let status = numeric_field(event, "status").or_else(|| numeric_field(event, "status_code"));
+    let error = event.get("error").unwrap_or(event);
+    let mut failure = classify(
+        status,
+        Some(error),
         None,
         retry_after_in(event.get("headers")),
         false,
-    )
+    );
+    let explicit_status = status
+        .or_else(|| numeric_field(error, "status"))
+        .or_else(|| numeric_field(error, "status_code"))
+        .or_else(|| numeric_field(event.get("response")?, "status_code"));
+    // Client compatibility only. Keep the original evidence and account health classification.
+    if explicit_status.is_none() {
+        failure.protocol.status = match text(error, "code") {
+            Some("server_is_overloaded") => 503,
+            Some(
+                "api_key_spend_limit_exceeded"
+                | "project_spend_limit_exceeded"
+                | "organization_spend_limit_exceeded",
+            ) => 429,
+            _ => failure.protocol.status,
+        };
+    }
+    failure
 }
 
 pub(crate) fn numeric_field(value: &JsonValue, name: &str) -> Option<i64> {
