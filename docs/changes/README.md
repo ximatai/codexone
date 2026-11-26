@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [Codex CLI 0.172.0 提供者错误兼容](codex-0172-provider-errors/proposal.md) · [验收](codex-0172-provider-errors/tasks.md)
+
 - [原生 WebSocket 预热的空输出](native-ws-warmup/proposal.md) · [任务](native-ws-warmup/tasks.md)
 
 - [首页 Key 今日估算费用](overview-key-estimated-cost/proposal.md) · [任务](overview-key-estimated-cost/tasks.md)

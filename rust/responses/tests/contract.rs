@@ -340,6 +340,62 @@ fn first_event_refusal_only_yields_zero_before_activity() {
 }
 
 #[test]
+fn statusless_provider_errors_normalize_only_the_client_status() {
+    let overload = "server_is_overloaded";
+    let project = "project_spend_limit_exceeded";
+    let cases = [
+        (overload, "", "", 503, false),
+        (overload, "", r#","status_code":502"#, 502, false),
+        (overload, r#","status":502"#, "", 502, false),
+        (project, r#","type":"insufficient_quota""#, "", 429, true),
+        ("api_key_spend_limit_exceeded", "", "", 429, false),
+        ("organization_spend_limit_exceeded", "", "", 429, false),
+        (project, "", r#","status":400"#, 400, true),
+        (project, "", r#","status":429"#, 429, true),
+        ("synthetic_spend_limit_exceeded", "", "", 502, false),
+    ];
+    for (code, error_fields, event_fields, status, proven_refusal) in cases {
+        let mut stream = ResponseStream::new(true, TEXT);
+        let raw = format!(
+            r#"{{"type":"error","error":{{"code":"{code}","resets_in_seconds":30{error_fields}}},"headers":{{"Retry-After":"2"}}{event_fields}}}"#
+        );
+        let observed = event(&mut stream, &raw);
+        assert_eq!(observed.usage.len(), usize::from(proven_refusal), "{raw}");
+        if let Some(usage) = observed.usage.first() {
+            assert!(usage.provider_rejected_before_output, "{raw}");
+            assert_eq!(usage.input_tokens, 0, "{raw}");
+        }
+        let Err(EventFailure::Provider(failure)) = observed.result else {
+            panic!("expected provider failure for {raw}");
+        };
+        let (internal_code, cooldown) = match (code, event_fields) {
+            ("server_is_overloaded", _) => ("upstream_unavailable", Some(30)),
+            (_, r#","status":429"#) => ("upstream_rate_limited", Some(30)),
+            _ => ("upstream_rejected", None),
+        };
+        assert_eq!(
+            failure.protocol,
+            ProtocolError::new(status, internal_code),
+            "{raw}"
+        );
+        assert_eq!(failure.account_cooldown(0), cooldown, "{raw}");
+        assert_eq!(failure.client_retry_after.as_deref(), Some("2"), "{raw}");
+        let downstream = stream_error_event(failure.protocol, Some(&failure), "ref");
+        assert_eq!(
+            downstream.get("type").and_then(JsonValue::as_str),
+            Some("response.failed"),
+            "{raw}"
+        );
+        let error = downstream.get("response").unwrap().get("error").unwrap();
+        assert_eq!(
+            error.get("code").and_then(JsonValue::as_str),
+            Some(code),
+            "{raw}"
+        );
+    }
+}
+
+#[test]
 fn streaming_termination_distinguishes_done_and_trailing_frame_failure() {
     let mut stream = ResponseStream::new(true, TEXT);
     let mut done = DONE_FRAME;
