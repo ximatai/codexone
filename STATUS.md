@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v1.26.57](https://github.com/ximatai/codexone/releases/tag/v1.26.57)**（2026-11-22），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+当前稳定版本为 **[v1.26.58](https://github.com/ximatai/codexone/releases/tag/v1.26.58)**（2026-11-26），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+
+v1.26.58 对齐了 Codex CLI 0.172.0 对无状态上游过载和开支上限的错误识别。网关分别返回 503 和 429，并保留原始错误码和有效的重试提示。见[发布说明](CHANGELOG.md)。
 
 v1.26.57 修复了原生 Images 从扁平 SSE 聚合为非流式 JSON 时的逐图元数据归属。每张图现在携带自己的生成 ID 和图片元数据。见[发布说明](CHANGELOG.md)。
 
